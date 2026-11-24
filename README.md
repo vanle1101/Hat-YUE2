@@ -135,3 +135,15 @@ Cần có FFmpeg trong `PATH`. Trong `.env`, đặt `YUE2_LYRICS_MODEL` thành �
 Khởi động lại Studio. Mở **Cover**, chọn bài, chọn tiếng Việt, tiếng Anh hoặc tự phát hiện rồi bấm **Nhận diện lời**. Xem lại kết quả trước khi tạo cover vì giọng hát lẫn nhạc nền có thể làm nhận sai. Để giữ phần lời đang sửa, kết quả nhận diện sẽ hiện riêng và bạn có thể bấm **Dùng lời nhận diện** khi muốn thay thế. Giới hạn nhận diện là 12 phút và tệp dưới 40 MiB.
 
 Cover dùng SheetSage2 để chép bản nhạc. **Phối tự do** lấy giai điệu, **Bám bản gốc** lấy bản nhạc có giai điệu và hợp âm. Tùy chọn giọng nam/nữ được đưa vào mô tả của YuE2. Chất lượng và mức độ bám phụ thuộc vào kết quả chép nhạc và mô hình tạo bài.
+
+### Nhận diện qua API
+
+Trong tệp `.env` của bản cài trên ổ E, thêm:
+
+```dotenv
+YUE2_LYRICS_API_BASE_URL=https://codex.vorte.me/v1
+YUE2_LYRICS_API_MODEL=gpt-4o-transcribe
+YUE2_LYRICS_API_KEY=<khoa-proxy-moi>
+```
+
+Khởi động lại bằng `start_studio.bat`, mở **Cover**, chọn một tệp và chọn **API** trước khi bấm **Nhận diện lời**. Khi đó, Studio gửi bản âm thanh đã chuẩn hóa tới máy chủ API. Chọn **Trên máy** để giữ âm thanh cục bộ. Cả hai chế độ cần FFmpeg trong `PATH`; riêng chế độ tại máy cần Faster-Whisper. Giữ Studio trên localhost khi cấu hình khóa và lưu khóa trong `.env` cục bộ.

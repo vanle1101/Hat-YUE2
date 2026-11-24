@@ -50,12 +50,12 @@ def _release_worker_lock(handle):
             msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
     handle.close()
 
-from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator, model_validator
 
 from .cover import COVER_AUDIO_KEY, COVER_DISABLED, COVER_SHA_KEY, generation_fields
-from .lyrics import LyricsRecognizer, LyricsUnavailable
+from .lyrics import ApiLyricsRecognizer, LyricsRecognizer, LyricsUnavailable
 from .service_store import IdempotencyConflict, JobStore, QueueFull, TERMINAL
 
 JSON_BODY_LIMIT = 256 * 1024
@@ -95,6 +95,9 @@ class Settings(BaseModel):
     local_files_only: bool = False
     lyrics_model: str = "small"
     lyrics_local_files_only: bool | None = None
+    lyrics_api_base_url: str = "https://codex.vorte.me/v1"
+    lyrics_api_model: str = "gpt-4o-transcribe"
+    lyrics_api_key: SecretStr | None = Field(default=None, repr=False)
     sheetsage: str = "m-a-p/SheetSage2"
     sheetsage_revision: str | None = None
     sheetsage_device: Literal["off", "cpu", "cuda", "auto"] = "auto"
@@ -874,6 +877,11 @@ def create_app(settings=None, pipeline_factory=None, transcriber=None, lyrics_re
         settings.lyrics_model, local_files_only=lyrics_offline,
         work_dir=worker.root / "lyrics-tmp",
     )
+    api_key = settings.lyrics_api_key.get_secret_value().strip() if settings.lyrics_api_key else ""
+    api_recognizer = ApiLyricsRecognizer(
+        settings.lyrics_api_base_url, settings.lyrics_api_model, api_key,
+        work_dir=worker.root / "lyrics-tmp",
+    ) if api_key else None
     lyrics_lock = threading.Lock()
 
     @asynccontextmanager
@@ -954,16 +962,28 @@ def create_app(settings=None, pipeline_factory=None, transcriber=None, lyrics_re
         worker.wake.set()
         return JSONResponse(job, status_code=202 if created else 200, headers={"Location": f"/v1/jobs/{job['id']}"})
 
+    @app.get("/v1/lyrics/providers")
+    def lyrics_providers():
+        return {"api_host": api_recognizer.host if api_recognizer else None}
+
     @app.post("/v1/lyrics")
     def recognize_lyrics(
-            audio: UploadFile = File(), language: Literal["vi", "en", "auto"] = Form(default="vi")):
+            request: Request, audio: UploadFile = File(),
+            language: Literal["vi", "en", "auto"] = Form(default="vi"),
+            provider: Literal["local", "api"] = Form(default="local")):
+        origin = request.headers.get("origin")
+        if origin is not None and origin != str(request.base_url).rstrip("/"):
+            raise HTTPException(403, "Yêu cầu nhận diện phải đến từ chính Studio.")
+        engine = api_recognizer if provider == "api" else recognizer
+        if engine is None:
+            raise HTTPException(503, "Chưa cấu hình API nhận diện trong .env.")
         if not lyrics_lock.acquire(blocking=False):
             raise HTTPException(429, "Đang nhận diện một bài khác. Hãy thử lại sau.",
                                 headers={"Retry-After": "5"})
         try:
-            return recognizer.transcribe(audio.file, None if language == "auto" else language)
+            return engine.transcribe(audio.file, None if language == "auto" else language)
         except LyricsUnavailable as error:
-            log.warning("Lyrics recognition unavailable", exc_info=True)
+            log.warning("Lyrics recognition unavailable using %s provider", provider)
             raise HTTPException(503, str(error)) from None
         except ValueError as error:
             raise HTTPException(422, str(error)) from None

@@ -63,3 +63,49 @@ def test_recognizer_decodes_audio_and_removes_temporary_files(tmp_path):
     with pytest.raises(ValueError, match="Không đọc được"):
         recognizer.transcribe(BytesIO(b"invalid"), "vi")
     assert not list(tmp_path.iterdir())
+
+
+def test_api_is_opt_in_and_providers_does_not_expose_key(tmp_path):
+    local = TestClient(create_app(Settings(data_dir=tmp_path), lambda _: None))
+    assert local.get("/v1/lyrics/providers").json() == {"api_host": None}
+    assert local.post("/v1/lyrics", files={"audio": ("sample.wav", b"sample")},
+                      data={"provider": "api"}).status_code == 503
+    settings = Settings(data_dir=tmp_path, lyrics_api_key="test-only-key")
+    remote = TestClient(create_app(settings, lambda _: None))
+    assert remote.get("/v1/lyrics/providers").json() == {"api_host": "codex.vorte.me"}
+    assert "test-only-key" not in repr(settings)
+    response = remote.post("/v1/lyrics", files={"audio": ("sample.wav", b"sample")},
+                           data={"provider": "api"}, headers={"Origin": "https://other.example"})
+    assert response.status_code == 403
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="requires FFmpeg")
+def test_api_recognizer_uploads_normalized_audio_and_handles_errors(tmp_path):
+    import httpx
+
+    from yue2.lyrics import ApiLyricsRecognizer
+
+    source = BytesIO()
+    with wave.open(source, "wb") as audio:
+        audio.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+        audio.writeframes(b"\0" * 3200)
+    payload = source.getvalue()
+    statuses = iter([200, 401, 429])
+
+    def respond(request):
+        assert str(request.url) == "https://codex.vorte.me/v1/audio/transcriptions"
+        assert request.headers["authorization"] == "Bearer test-only-key"
+        assert b"gpt-4o-transcribe" in request.content
+        assert b'name="language"\r\n\r\nvi' in request.content
+        assert b'filename="track.wav"' in request.content
+        assert b"RIFF" in request.content
+        return httpx.Response(next(statuses), json={"text": "Lời nhận được", "asset_pointer": "private"})
+
+    recognizer = ApiLyricsRecognizer("https://codex.vorte.me/v1", "gpt-4o-transcribe", "test-only-key",
+                                    work_dir=tmp_path, transport=httpx.MockTransport(respond))
+    assert recognizer.transcribe(BytesIO(payload), "vi") == {"lyrics": "Lời nhận được", "language": "vi"}
+    with pytest.raises(LyricsUnavailable, match="từ chối khóa"):
+        recognizer.transcribe(BytesIO(payload), "vi")
+    with pytest.raises(LyricsUnavailable, match="giới hạn"):
+        recognizer.transcribe(BytesIO(payload), "vi")
+    assert not list(tmp_path.iterdir())

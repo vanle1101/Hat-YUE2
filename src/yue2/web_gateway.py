@@ -139,6 +139,10 @@ def create_app(upstream=None):
             return JSONResponse({"detail": "Không tìm thấy đường dẫn"}, 404)
         if any(part in {".", ".."} for part in path.split("/")):
             return JSONResponse({"detail": "Đường dẫn không hợp lệ"}, 400)
+        if path == "v1/lyrics" and request.method == "POST":
+            origin = request.headers.get("origin")
+            if origin is not None and origin != str(request.base_url).rstrip("/"):
+                return JSONResponse({"detail": "Yêu cầu nhận diện phải đến từ chính Studio."}, 403)
         cover = request.method == "POST" and path in {"v1/covers", "v1/lyrics"}
         limit = COVER_BODY_LIMIT if cover else JSON_BODY_LIMIT
         body = bytearray()
