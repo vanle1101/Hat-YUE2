@@ -55,10 +55,12 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from .cover import COVER_AUDIO_KEY, COVER_DISABLED, COVER_SHA_KEY, generation_fields
+from .lyrics import LyricsRecognizer, LyricsUnavailable
 from .service_store import IdempotencyConflict, JobStore, QueueFull, TERMINAL
 
 JSON_BODY_LIMIT = 256 * 1024
 COVER_BODY_LIMIT = 40 * 1024 * 1024
+AUDIO_UPLOAD_PATHS = {"/v1/covers", "/v1/lyrics"}
 
 log = logging.getLogger("yue2.service")
 
@@ -91,6 +93,8 @@ class Settings(BaseModel):
     artifact_cleanup_interval_seconds: int = Field(default=300, ge=10)
     warmup: bool = True
     local_files_only: bool = False
+    lyrics_model: str = "small"
+    lyrics_local_files_only: bool | None = None
     sheetsage: str = "m-a-p/SheetSage2"
     sheetsage_revision: str | None = None
     sheetsage_device: Literal["off", "cpu", "cuda", "auto"] = "auto"
@@ -617,11 +621,14 @@ class JobWorker:
         if context["cancelled"]():
             raise InterruptedError("Cancelled before transcription")
         path = self._cover_audio_file(raw)
-        abc = self._melody_transcriber().transcribe(path)
+        transcriber = self._melody_transcriber()
+        if request["cot"] == "full":
+            abc = transcriber.transcribe(path, melody_only=False)
+        else:
+            abc = transcriber.transcribe(path)
         request.pop(COVER_AUDIO_KEY, None)
         request.pop(COVER_SHA_KEY, None)
         request["abc"] = abc
-        request["cot"] = "melody"
 
     def _parallel_ready(self, context):
         supports = all(hasattr(self.pipeline, name) for name in (
@@ -832,7 +839,7 @@ class BodyLimit:
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http" or scope["method"] != "POST":
             return await self.app(scope, receive, send)
-        cover = scope.get("path") == "/v1/covers"
+        cover = scope.get("path") in AUDIO_UPLOAD_PATHS
         limit = self.cover_limit if cover else self.limit
         detail = "Dữ liệu yêu cầu vượt quá 40 MiB" if cover else "Dữ liệu yêu cầu vượt quá 256 KiB"
         body = bytearray()
@@ -856,9 +863,18 @@ class BodyLimit:
         await self.app(scope, replay, send)
 
 
-def create_app(settings=None, pipeline_factory=None, transcriber=None):
+def create_app(settings=None, pipeline_factory=None, transcriber=None, lyrics_recognizer=None):
     settings = settings or Settings.from_env()
     worker = JobWorker(settings, pipeline_factory or build_pipeline, transcriber=transcriber)
+
+    lyrics_offline = settings.lyrics_local_files_only
+    if lyrics_offline is None:
+        lyrics_offline = settings.local_files_only
+    recognizer = lyrics_recognizer or LyricsRecognizer(
+        settings.lyrics_model, local_files_only=lyrics_offline,
+        work_dir=worker.root / "lyrics-tmp",
+    )
+    lyrics_lock = threading.Lock()
 
     @asynccontextmanager
     async def lifespan(app):
@@ -938,11 +954,31 @@ def create_app(settings=None, pipeline_factory=None, transcriber=None):
         worker.wake.set()
         return JSONResponse(job, status_code=202 if created else 200, headers={"Location": f"/v1/jobs/{job['id']}"})
 
+    @app.post("/v1/lyrics")
+    def recognize_lyrics(
+            audio: UploadFile = File(), language: Literal["vi", "en", "auto"] = Form(default="vi")):
+        if not lyrics_lock.acquire(blocking=False):
+            raise HTTPException(429, "Đang nhận diện một bài khác. Hãy thử lại sau.",
+                                headers={"Retry-After": "5"})
+        try:
+            return recognizer.transcribe(audio.file, None if language == "auto" else language)
+        except LyricsUnavailable as error:
+            log.warning("Lyrics recognition unavailable", exc_info=True)
+            raise HTTPException(503, str(error)) from None
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from None
+        except Exception:
+            log.exception("Lyrics recognition failed")
+            raise HTTPException(500, "Không nhận diện được lời. Hãy xem log hoặc nhập lời thủ công.") from None
+        finally:
+            lyrics_lock.release()
+
     @app.post("/v1/covers", status_code=202)
     async def cover(
             audio: UploadFile = File(),
             style: str = Form(),
             lyrics: str = Form(),
+            reference: Literal["free", "close"] = Form(default="free"),
             seed: int = Form(default=831001),
             cfg_scale: float | None = Form(default=None),
             idempotency_key: str | None = Header(default=None, min_length=1, max_length=128),
@@ -957,7 +993,7 @@ def create_app(settings=None, pipeline_factory=None, transcriber=None):
         if len(payload) > COVER_BODY_LIMIT:
             raise HTTPException(413, "Dữ liệu yêu cầu vượt quá 40 MiB")
         try:
-            public = GenerateRequest(style=style, lyrics=lyrics, cot="melody", seed=seed, cfg_scale=cfg_scale)
+            public = GenerateRequest(style=style, lyrics=lyrics, cot="full" if reference == "close" else "melody", seed=seed, cfg_scale=cfg_scale)
         except ValidationError as exc:
             message = exc.errors()[0]["msg"] if exc.errors() else "Yêu cầu cover không hợp lệ"
             raise HTTPException(422, message) from None

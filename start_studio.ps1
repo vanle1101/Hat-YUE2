@@ -21,6 +21,7 @@ $DefaultEnv = @{
     "YUE2_HOST"                 = "127.0.0.1"
     "YUE2_PORT"                 = "8000"
     "YUE2_UPSTREAM"             = "http://127.0.0.1:8000"
+    "YUE2_WEB_HOST"             = "127.0.0.1"
     "YUE2_WEB_PORT"             = "8016"
     "HF_HOME"                   = Join-Path $Root ".cache\huggingface"
 }
@@ -49,6 +50,14 @@ if (Test-Path $EnvFile) {
             [Environment]::SetEnvironmentVariable($parts[0].Trim(), $parts[1].Trim(), "Process")
         }
     }
+}
+
+# Load the current checkout even when the virtual environment installed a wheel.
+$SourceDir = Join-Path $Root "src"
+if ($env:PYTHONPATH) {
+    $env:PYTHONPATH = "$SourceDir;$env:PYTHONPATH"
+} else {
+    $env:PYTHONPATH = $SourceDir
 }
 
 $ServeExe = Join-Path $Root ".venv\Scripts\yue2-serve.exe"

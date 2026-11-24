@@ -856,3 +856,22 @@ def test_environment_settings_validate(monkeypatch):
         Settings(nar_batch_size=3)
     compatible = Settings(ar_concurrency=2, vllm_max_num_seqs=2)
     assert compatible.nar_batch_size == 2
+
+
+def test_close_cover_transcribes_harmony_and_uses_full_score(tmp_path):
+    class FullTranscriber(FakeTranscriber):
+        def transcribe(self, audio, *, melody_only=True):
+            assert melody_only is False
+            return super().transcribe(audio)
+
+    pipe, transcriber = RecordingPipeline(), FullTranscriber()
+    with service(tmp_path, pipe, transcriber=transcriber) as (client, _, _):
+        response = client.post(
+            "/v1/covers", files={"audio": ("song.wav", b"audio", "audio/wav")},
+            data={"style": "pop, ballad, female vocal", "lyrics": "Song", "reference": "close"},
+        )
+        assert response.status_code == 202, response.text
+        assert terminal(client, response.json()["id"])["status"] == "succeeded"
+        assert pipe.seen["cot"] == "full"
+        assert pipe.seen["style"] == "pop, ballad, female vocal"
+        assert pipe.seen["abc"] == transcriber.abc

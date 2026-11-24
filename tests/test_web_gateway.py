@@ -90,3 +90,22 @@ def test_gateway_reports_runtime_connects_and_streams_artifacts(tmp_path):
         assert response.content == b"fLaC"
         assert response.headers["content-range"] == "bytes 0-3/4"
         app.state.client = original
+
+
+def test_lyrics_upload_is_forwarded_with_audio_limit_and_long_read_timeout():
+    app = create_app("http://127.0.0.1:8015")
+
+    def handler(request):
+        assert request.url.path == "/v1/lyrics"
+        assert len(request.content) > 256 * 1024
+        assert request.extensions["timeout"]["read"] > 30
+        assert b"language" in request.content
+        return httpx.Response(200, json={"lyrics": "Xin chào"})
+
+    with TestClient(app) as client:
+        original = replace_upstream(app, handler)
+        response = client.post("/v1/lyrics", files={"audio": ("song.wav", b"x" * (300 * 1024))},
+                               data={"language": "vi"})
+        assert response.status_code == 200
+        assert response.json() == {"lyrics": "Xin chào"}
+        app.state.client = original

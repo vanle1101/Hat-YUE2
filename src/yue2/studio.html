@@ -92,6 +92,7 @@ aside { display: grid; gap: 14px; }
 .message:empty { display: none; }
 .lookup { display: flex; margin: 12px 0 8px; gap: 6px; }
 .lookup input { min-width: 0; }
+.lookup button { white-space: nowrap; }
 #history > p { padding-top: 9px; }
 .job { border-top: 1px solid var(--line); padding: 9px 0; display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; }
 .job small { color: var(--muted); display: block; margin-top: 3px; }
@@ -114,6 +115,49 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflo
   .card { padding: 15px; }
   aside, .grid { grid-template-columns: minmax(0, 1fr); }
   .composer-actions .primary { width: 100%; }
+}
+
+.hero { padding: 24px 30px; border-radius: 19px; }
+.hero h1 { font-size: clamp(1.75rem, 4vw, 2.45rem); }
+.workspace { grid-template-columns: minmax(0, 1fr); }
+aside { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); align-items: start; }
+.tabs { max-width: 420px; margin: 0 auto 19px; }
+.editor { display: grid; grid-template-columns: minmax(0, 1fr) minmax(245px, .47fr); gap: 14px; }
+.editor-fields { min-width: 0; }
+.editor-fields .field:last-child { margin-bottom: 0; }
+.choice-panel { border: 1px solid var(--line); border-radius: 12px; background: var(--soft); padding: 14px; }
+.choice-panel fieldset { border: 0; margin: 0 0 15px; padding: 0; min-width: 0; }
+.choice-panel fieldset:last-child { margin: 0; }
+.choice-panel legend { padding: 0; margin-bottom: 7px; color: var(--ink); font-size: 13px; font-weight: 680; }
+.segmented { display: flex; gap: 3px; background: #eae2f4; padding: 3px; border-radius: 9px; }
+.segmented label { position: relative; flex: 1; margin: 0; min-width: 0; text-align: center; cursor: pointer; }
+.segmented span { display: block; padding: 7px 3px; border-radius: 6px; color: #4a4058; }
+.segmented input, .chips input { position: absolute; width: 1px; height: 1px; padding: 0; opacity: 0; }
+.segmented input:focus-visible + span, .chips input:focus-visible + span { outline: 3px solid #8e61e2; outline-offset: 1px; }
+.segmented input:checked + span { background: white; color: var(--purple); box-shadow: 0 1px 5px #29194a20; }
+.chips { margin: 0; }
+.chips label { position: relative; margin: 0; cursor: pointer; }
+.chips span { display: inline-block; padding: 5px 8px; border: 1px solid #d9cbea; border-radius: 99px; background: #fff; color: #4e376d; font-size: 12px; }
+.chips input:checked + span { border-color: #8051c0; color: #47217e; background: #e9dcfa; }
+#customStyle { font-size: 13px; }
+.dropzone { width: 100%; padding: 28px 12px; border: 1px dashed #a284cd; border-radius: 14px; background: #f8f3ff; color: #41276a; text-align: center; }
+.dropzone strong, .dropzone small { display: block; }
+.dropzone small { margin-top: 6px; color: var(--muted); }
+.dropzone[data-dragging="true"] { background: #e9dcfa; border-color: #5526a7; }
+.source { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 11px; background: var(--soft); border: 1px solid var(--line); border-radius: 12px; }
+.source div:first-child { min-width: 0; }
+.source-name { overflow-wrap: anywhere; font-size: 14px; }
+#recognize { color: var(--purple); border-color: #d4bcea; flex-shrink: 0; }
+.lyric-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 3px 0 9px; }
+.lyric-tools select { width: auto; font-size: 13px; }
+#recognitionStatus { margin: 7px 0; padding: 5px 7px; }
+#recognitionStatus:empty { display: none; }
+#lyricSuggestion { margin-block: 8px; padding: 10px; background: var(--soft); border-radius: 9px; }
+#lyricSuggestion textarea { margin-block: 7px; }
+@media (max-width: 800px) { .editor { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 520px) {
+  aside { grid-template-columns: minmax(0, 1fr); }
+  .source { align-items: start; flex-wrap: wrap; }
 }
 </style>
 </head>
@@ -151,28 +195,86 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflo
           <button type="button" id="coverMode" aria-pressed="false">Cover</button>
         </div>
 
-        <div class="upload" id="coverInput" hidden>
-          <label for="coverAudio">Tải bài hát gốc lên</label>
-          <input id="coverAudio" type="file" accept="audio/*,.mp3,.wav,.flac,.m4a,.ogg,.aac" aria-describedby="coverHint">
-          <p class="hint" id="coverHint">MP3, WAV, FLAC, M4A, OGG hoặc AAC. Chọn tệp dưới 40 MiB. YuE2 dùng giai điệu gốc và tạo giọng hát mới theo lời bạn nhập.</p>
+        <section id="coverInput" aria-label="Bản thu gốc" hidden>
+          <input id="coverAudio" type="file" accept="audio/*,.mp3,.wav,.flac,.m4a,.ogg,.aac,.webm" hidden>
+          <div class="upload">
+            <button type="button" class="dropzone" id="chooseAudio">
+              <strong>Chọn hoặc thả bài hát vào đây</strong>
+              <small>MP3, WAV, FLAC, M4A, OGG, AAC, WebM · dưới 40 MiB</small>
+            </button>
+            <div class="source" id="sourceSummary" hidden>
+              <div><p class="hint">Bản thu gốc</p><p class="source-name" id="sourceName"></p><p class="hint" id="sourceSize"></p></div>
+              <div class="actions">
+                <button type="button" id="playSource" aria-controls="sourcePlayer" aria-expanded="false">Nghe bản gốc</button>
+                <button type="button" id="replaceAudio">Đổi tệp</button>
+                <button type="button" id="removeAudio">Bỏ tệp</button>
+              </div>
+            </div>
+            <audio id="sourcePlayer" controls preload="metadata" hidden aria-label="Nghe bản thu gốc"></audio>
+          </div>
+        </section>
+
+        <div class="editor" id="editor">
+          <div class="editor-fields" id="editorFields">
+            <div class="field" id="descriptionField">
+              <div class="field-head"><label for="style" id="descriptionLabel">Mô tả bài hát</label><output id="styleCount" for="style"></output></div>
+              <textarea id="style" rows="3" maxlength="2000" placeholder="Ví dụ: Piano nhẹ, nhịp chậm, không khí hoài niệm"></textarea>
+            </div>
+            <div class="field" id="lyricsField">
+              <div class="field-head"><label for="lyrics">Lời bài hát</label><output id="lyricsCount" for="lyrics"></output></div>
+              <div class="lyric-tools" id="lyricTools" hidden>
+                <select id="lyricLanguage" aria-label="Ngôn ngữ nhận diện">
+                  <option value="vi">Tiếng Việt</option><option value="en">Tiếng Anh</option><option value="auto">Tự phát hiện</option>
+                </select>
+                <button id="recognize">Nhận diện lời</button>
+              </div>
+              <p id="recognitionStatus" class="status" role="status"></p>
+              <div id="lyricSuggestion" hidden>
+                <label for="recognizedText">Lời vừa nhận diện</label>
+                <textarea id="recognizedText" rows="4" readonly></textarea>
+                <button id="applyLyrics">Dùng lời nhận diện</button>
+              </div>
+              <textarea id="lyrics" rows="6" maxlength="16000" placeholder="[Verse]&#10;Nhập lời đoạn đầu…&#10;&#10;[Chorus]&#10;Nhập lời điệp khúc…"></textarea>
+            </div>
+          </div>
+
+          <section class="choice-panel" aria-label="Chọn giọng và phong cách">
+            <fieldset>
+              <legend>Giọng hát</legend>
+              <div class="segmented">
+                <label><input type="radio" name="voice" value="" checked><span>Tự chọn</span></label>
+                <label><input type="radio" name="voice" value="female vocal"><span>Nữ</span></label>
+                <label><input type="radio" name="voice" value="male vocal"><span>Nam</span></label>
+              </div>
+            </fieldset>
+            <fieldset>
+              <legend>Thể loại · có thể chọn nhiều</legend>
+              <div class="chips">
+                <label><input type="checkbox" name="genre" value="pop"><span>Pop</span></label>
+                <label><input type="checkbox" name="genre" value="ballad"><span>Ballad</span></label>
+                <label><input type="checkbox" name="genre" value="rock"><span>Rock</span></label>
+                <label><input type="checkbox" name="genre" value="R&amp;B"><span>R&amp;B</span></label>
+                <label><input type="checkbox" name="genre" value="electronic"><span>Điện tử</span></label>
+                <label><input type="checkbox" name="genre" value="bolero"><span>Bolero</span></label>
+                <label><input type="checkbox" name="genre" value="acoustic"><span>Acoustic</span></label>
+                <label><input type="checkbox" name="genre" value="indie"><span>Indie</span></label>
+                <label><input type="checkbox" name="genre" value="jazz"><span>Jazz</span></label>
+              </div>
+              <label for="customStyle">Thể loại khác</label>
+              <input id="customStyle" maxlength="300" placeholder="Ví dụ: lo-fi, nhạc Trịnh">
+            </fieldset>
+            <fieldset id="referenceOptions" hidden>
+              <legend>Giai điệu tham chiếu</legend>
+              <div class="segmented">
+                <label><input type="radio" name="reference" value="free" checked><span>Phối tự do</span></label>
+                <label><input type="radio" name="reference" value="close"><span>Bám bản gốc</span></label>
+              </div>
+              <p class="hint" id="referenceHint">Lấy giai điệu và để YuE2 phối khí.</p>
+            </fieldset>
+          </section>
         </div>
 
-        <div class="field">
-          <div class="field-head"><label for="style">Phong cách âm nhạc</label><output id="styleCount" for="style"></output></div>
-          <textarea id="style" rows="2" maxlength="2000" placeholder="Ví dụ: Pop ballad Việt, piano nhẹ, giọng nữ ấm, 88 BPM"></textarea>
-        </div>
-        <div class="chips" role="group" aria-label="Gợi ý phong cách">
-          <button type="button" data-style="Vietnamese pop ballad, warm piano, soft drums">Pop ballad</button>
-          <button type="button" data-style="Vietnamese bolero, nylon guitar, slow tempo">Bolero</button>
-          <button type="button" data-style="Vietnamese acoustic pop, fingerstyle guitar, intimate vocal">Acoustic</button>
-          <button type="button" data-style="Vietnamese pop rock, electric guitar, live drums">Pop rock</button>
-        </div>
-        <div class="field">
-          <div class="field-head"><label for="lyrics">Lời bài hát</label><output id="lyricsCount" for="lyrics"></output></div>
-          <textarea id="lyrics" rows="5" maxlength="16000" placeholder="[Verse]&#10;Nhập lời đoạn đầu…&#10;&#10;[Chorus]&#10;Nhập lời điệp khúc…"></textarea>
-        </div>
-
-        <div class="composer-actions">
+        <div class="composer-actions" id="composerActions">
           <div class="actions">
             <button id="example">Dùng lời mẫu</button>
             <button id="importButton">Nhập JSON</button>
@@ -241,6 +343,9 @@ const historyKey = 'yue2-studio-jobs-v2';
 const jobIdPattern = /^[a-f0-9]{32}$/;
 const terminalStates = ['succeeded', 'truncated', 'failed', 'cancelled'];
 let mode = 'song';
+let sourceFile = null;
+let sourceURL = null;
+let recognition = null;
 let submitting = false;
 let selected = null;
 let poll = null;
@@ -295,6 +400,18 @@ function setMode(next) {
   $('songMode').setAttribute('aria-pressed', String(!isCover));
   $('coverMode').setAttribute('aria-pressed', String(isCover));
   $('coverInput').hidden = !isCover;
+  $('referenceOptions').hidden = !isCover;
+  $('editor').hidden = isCover && !sourceFile;
+  $('composerActions').hidden = isCover && !sourceFile;
+  $('settings').hidden = isCover && !sourceFile;
+  $('lyricTools').hidden = !isCover;
+  $('recognitionStatus').hidden = !isCover;
+  $('lyricSuggestion').hidden = !isCover || !$('recognizedText').value;
+  const fields = $('editorFields');
+  const firstField = isCover ? $('lyricsField') : $('descriptionField');
+  if (fields.firstElementChild !== firstField) fields.prepend(firstField);
+  if (!isCover && !$('sourcePlayer').paused) $('sourcePlayer').pause();
+  $('descriptionLabel').textContent = isCover ? 'Mô tả bản cover' : 'Mô tả bài hát';
   $('composition').hidden = isCover;
   $('scoreInput').hidden = isCover;
   $('submit').textContent = submitting ? 'Đang gửi…' : isCover ? 'Tạo bản cover' : 'Bắt đầu tạo bài hát';
@@ -308,11 +425,26 @@ function updateCounts() {
   }
 }
 
+function selection(name) {
+  return document.querySelector('input[name="' + name + '"]:checked').value;
+}
+
+function combinedStyle() {
+  const genres = Array.from(document.querySelectorAll('input[name="genre"]:checked'), input => input.value);
+  const parts = [$('style').value.trim(), ...genres, ...$('customStyle').value.split(','), selection('voice')];
+  const unique = new Map();
+  for (const part of parts) {
+    const clean = part.trim();
+    if (clean && !unique.has(clean.toLowerCase())) unique.set(clean.toLowerCase(), clean);
+  }
+  return [...unique.values()].join(', ');
+}
+
 function request() {
   const seed = Number($('seed').value);
   if (!Number.isSafeInteger(seed) || seed < 0) throw Error('Seed phải là số nguyên không âm hợp lệ.');
-  const payload = {style: $('style').value.trim(), lyrics: $('lyrics').value.trim(), seed};
-  if (!payload.style || !payload.lyrics) throw Error('Hãy nhập phong cách âm nhạc và lời bài hát.');
+  const payload = {style: combinedStyle(), lyrics: $('lyrics').value.trim(), seed};
+  if (!payload.style || !payload.lyrics) throw Error('Hãy nhập lời và mô tả bài hát hoặc chọn một thể loại.');
   if (payload.style.length > $('style').maxLength || payload.lyrics.length > $('lyrics').maxLength) {
     throw Error('Phong cách hoặc lời bài hát vượt giới hạn ký tự.');
   }
@@ -321,7 +453,7 @@ function request() {
     if (!Number.isFinite(cfg) || cfg < 0 || cfg > 20) throw Error('CFG phải từ 0 đến 20.');
     payload.cfg_scale = cfg;
   }
-  payload.cot = mode === 'cover' ? 'melody' : $('cot').value;
+  payload.cot = mode === 'cover' ? (selection('reference') === 'close' ? 'full' : 'melody') : $('cot').value;
   if (mode === 'cover') return payload;
   const abc = $('abc').value.trim();
   if (abc.length > $('abc').maxLength) throw Error('Bản nhạc ABC vượt giới hạn ký tự.');
@@ -331,6 +463,11 @@ function request() {
 }
 
 function fill(payload) {
+  if ('style' in payload) {
+    for (const checkbox of document.querySelectorAll('input[name="genre"]')) checkbox.checked = false;
+    document.querySelector('input[name="voice"][value=""]').checked = true;
+    $('customStyle').value = '';
+  }
   for (const key of ['style', 'lyrics', 'cot', 'seed', 'abc']) {
     if (key in payload) $(key).value = payload[key] ?? '';
     else if (key === 'abc') $('abc').value = '';
@@ -479,13 +616,13 @@ async function update(view) {
 async function submit() {
   const payload = request();
   const isCover = mode === 'cover';
-  const file = $('coverAudio').files[0];
+  const file = sourceFile;
   let body = JSON.stringify(payload);
   if (isCover) {
     if (!file) throw Error('Hãy chọn tệp nhạc gốc để cover.');
-    if (file.size >= 40 * 1024 * 1024) throw Error('Tệp nhạc phải dưới 40 MiB.');
     body = new FormData();
     body.append('audio', file);
+    body.append('reference', selection('reference'));
     for (const [key, value] of Object.entries(payload)) {
       if (key !== 'cot') body.append(key, String(value));
     }
@@ -524,19 +661,113 @@ async function health() {
 $('songMode').onclick = () => setMode('song');
 $('coverMode').onclick = () => setMode('cover');
 for (const id of ['style', 'lyrics']) $(id).addEventListener('input', updateCounts);
-for (const chip of document.querySelectorAll('[data-style]')) {
-  chip.onclick = () => {
-    const field = $('style');
-    const current = field.value.trim();
-    const style = chip.dataset.style;
-    const next = current ? current + ', ' + style : style;
-    if (next.length > field.maxLength) return message('Phong cách đã đạt giới hạn ký tự.', true);
-    if (!current.includes(style)) field.value = next;
-    updateCounts();
+function lyricStatus(text, error = false) {
+  $('recognitionStatus').textContent = text;
+  $('recognitionStatus').classList.toggle('error', error);
+}
+
+function setSource(file) {
+  if (file && (!file.size || file.size >= 40 * 1024 * 1024)) {
+    message('Hãy chọn một tệp âm thanh có dữ liệu và dưới 40 MiB.', true);
+    return;
+  }
+  if (recognition) recognition.abort();
+  recognition = null;
+  const player = $('sourcePlayer');
+  player.pause();
+  player.removeAttribute('src');
+  player.hidden = true;
+  $('playSource').setAttribute('aria-expanded', 'false');
+  if (sourceURL) URL.revokeObjectURL(sourceURL);
+  sourceFile = file;
+  sourceURL = file ? URL.createObjectURL(file) : null;
+  if (sourceURL) player.src = sourceURL;
+  $('sourceName').textContent = file?.name || '';
+  $('sourceSize').textContent = file ? (file.size / 1024 ** 2).toFixed(2) + ' MiB' : '';
+  $('sourceSummary').hidden = !file;
+  $('chooseAudio').hidden = Boolean(file);
+  $('recognize').disabled = false;
+  $('recognize').textContent = 'Nhận diện lời';
+  $('recognizedText').value = '';
+  lyricStatus('');
+  setMode(mode);
+}
+
+async function recognizeLyrics() {
+  if (!sourceFile || recognition) return;
+  const current = new AbortController();
+  recognition = current;
+  const form = new FormData();
+  form.append('audio', sourceFile);
+  form.append('language', $('lyricLanguage').value);
+  $('recognize').disabled = true;
+  $('recognize').textContent = 'Đang nhận diện…';
+  lyricStatus('Đang nhận diện trên máy. Lần đầu có thể cần tải model.');
+  try {
+    const result = await (await api('/v1/lyrics', {method: 'POST', body: form, signal: current.signal})).json();
+    if (recognition !== current) return;
+    if (!$('lyrics').value.trim()) {
+      $('lyrics').value = result.lyrics;
+      updateCounts();
+      lyricStatus('Đã điền lời nhận diện. Hãy rà lại trước khi tạo bản cover.');
+    } else {
+      $('recognizedText').value = result.lyrics;
+      $('lyricSuggestion').hidden = mode !== 'cover';
+      lyricStatus('Đã nhận diện xong. Bạn có thể dùng kết quả để thay lời đang nhập.');
+    }
+  } catch (error) {
+    if (recognition === current) lyricStatus(error.message, true);
+  } finally {
+    if (recognition === current) {
+      recognition = null;
+      $('recognize').disabled = false;
+      $('recognize').textContent = 'Nhận diện lời';
+    }
+  }
+}
+
+$('chooseAudio').onclick = $('replaceAudio').onclick = () => $('coverAudio').click();
+$('coverAudio').onchange = () => {
+  const file = $('coverAudio').files[0];
+  $('coverAudio').value = '';
+  if (file) setSource(file);
+};
+$('removeAudio').onclick = () => { setSource(null); $('chooseAudio').focus(); };
+$('playSource').onclick = action(async () => {
+  const player = $('sourcePlayer');
+  player.hidden = !player.hidden;
+  $('playSource').setAttribute('aria-expanded', String(!player.hidden));
+  if (player.hidden) player.pause();
+  else await player.play();
+});
+$('chooseAudio').ondragover = event => {
+  event.preventDefault();
+  $('chooseAudio').dataset.dragging = 'true';
+};
+$('chooseAudio').ondragleave = () => { delete $('chooseAudio').dataset.dragging; };
+$('chooseAudio').ondrop = event => {
+  event.preventDefault();
+  delete $('chooseAudio').dataset.dragging;
+  const file = event.dataTransfer.files[0];
+  if (file) setSource(file);
+};
+for (const input of document.querySelectorAll('input[name="reference"]')) {
+  input.onchange = () => {
+    $('referenceHint').textContent = selection('reference') === 'close'
+      ? 'Chép cả giai điệu và hợp âm từ bản gốc.' : 'Lấy giai điệu và để YuE2 phối khí.';
   };
 }
+$('recognize').onclick = recognizeLyrics;
+$('applyLyrics').onclick = () => {
+  $('lyrics').value = $('recognizedText').value;
+  $('recognizedText').value = '';
+  $('lyricSuggestion').hidden = true;
+  updateCounts();
+  $('lyrics').focus();
+  lyricStatus('Đã dùng lời nhận diện. Bạn có thể chỉnh lại bên dưới.');
+};
 $('example').onclick = () => fill({
-  style: 'Vietnamese pop ballad, warm piano, soft strings and light drums, 88 BPM',
+  style: 'Vietnamese, warm piano, soft strings and light drums, 88 BPM',
   lyrics: '[Verse]\nNắng nghiêng qua mái hiên nhà\nMình nghe thành phố ngân nga\n\n[Chorus]\nMai này dù bước chân xa\nCòn câu hát đưa ta về nhà',
   cot: 'full', seed: 42,
 });
@@ -550,6 +781,12 @@ $('importFile').onchange = action(async () => {
   try {
     const payload = JSON.parse(await file.text());
     fill(payload);
+    if (mode === 'cover' && ['full', 'melody'].includes(payload.cot)) {
+      const reference = payload.cot === 'full' ? 'close' : 'free';
+      const radio = document.querySelector('input[name="reference"][value="' + reference + '"]');
+      radio.checked = true;
+      radio.onchange();
+    }
     const hadSamplingOptions = 'abc_sampling' in payload || 'semantic_sampling' in payload;
     message(hadSamplingOptions ? 'Đã nhập JSON. API hiện tại không nhận thông số lấy mẫu.' : 'Đã nhập tham số từ JSON.');
   } finally { $('importFile').value = ''; }
@@ -582,6 +819,7 @@ $('cancel').onclick = action(async () => {
     }
   }
 });
+setMode('song');
 updateCounts();
 health();
 refreshHistory();

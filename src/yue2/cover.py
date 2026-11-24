@@ -37,7 +37,7 @@ def require_melody_abc(result):
 
 
 class MelodyTranscriber:
-    """Load SheetSage2 on first use and return a chord-free melody ABC."""
+    """Load SheetSage2 on first use and return an ABC score."""
 
     def __init__(self, model="m-a-p/SheetSage2", revision=None, device="off",
                  local_files_only=False, min_free_gib=8):
@@ -95,14 +95,14 @@ class MelodyTranscriber:
         self._model = model
         return self._model
 
-    def transcribe(self, audio):
+    def transcribe(self, audio, *, melody_only=True):
         model = self.load()
         device_type = self._torch_device.type if self._torch_device is not None else "cpu"
+        # SheetSage2's default prompts include harmony for a complete lead sheet.
+        options = {"prompts": list(MELODY_PROMPTS)} if melody_only else {}
         result = model.transcribe(
-            str(audio),
-            prompts=list(MELODY_PROMPTS),
-            melody_only=True,
-            dtype="bf16" if device_type == "cuda" else "fp32",
+            str(audio), melody_only=melody_only,
+            dtype="bf16" if device_type == "cuda" else "fp32", **options,
         )
         return require_melody_abc(result)
 

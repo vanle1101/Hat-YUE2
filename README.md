@@ -120,3 +120,18 @@ YuE2-Turbo phát triển dựa trên **YuE2** của cộng đồng M-A-P:
 ## Giấy phép
 
 Mã nguồn trong repository dùng giấy phép **[Apache 2.0](LICENSE)**. Trọng số mô hình YuE2 dùng giấy phép riêng **[CC BY-NC 4.0](MODEL_LICENSE)**; các thành phần bên thứ ba giữ [giấy phép gốc](THIRD_PARTY_NOTICES.md).
+
+
+## Nhận diện lời trong Studio (Windows)
+
+Tại thư mục dự án trên ổ E, cài phần nhận diện vào môi trường Python đang chạy Studio:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install --no-cache-dir "faster-whisper==1.2.1"
+```
+
+Cần có FFmpeg trong `PATH`. Trong `.env`, đặt `YUE2_LYRICS_MODEL` thành đường dẫn thư mục Whisper CTranslate2 có sẵn để chạy offline. Nếu chưa có model, đặt `YUE2_LYRICS_LOCAL_FILES_ONLY=false` để tải Whisper đa ngôn ngữ `small` từ Hugging Face khi dùng lần đầu. Script Windows đặt `HF_HOME` bên trong repo để cache nằm trên ổ E. Chỉ model được tải về; âm thanh được xử lý trên CPU tại máy bạn.
+
+Khởi động lại Studio. Mở **Cover**, chọn bài, chọn tiếng Việt, tiếng Anh hoặc tự phát hiện rồi bấm **Nhận diện lời**. Xem lại kết quả trước khi tạo cover vì giọng hát lẫn nhạc nền có thể làm nhận sai. Để giữ phần lời đang sửa, kết quả nhận diện sẽ hiện riêng và bạn có thể bấm **Dùng lời nhận diện** khi muốn thay thế. Giới hạn nhận diện là 12 phút và tệp dưới 40 MiB.
+
+Cover dùng SheetSage2 để chép bản nhạc. **Phối tự do** lấy giai điệu, **Bám bản gốc** lấy bản nhạc có giai điệu và hợp âm. Tùy chọn giọng nam/nữ được đưa vào mô tả của YuE2. Chất lượng và mức độ bám phụ thuộc vào kết quả chép nhạc và mô hình tạo bài.

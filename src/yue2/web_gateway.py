@@ -139,7 +139,7 @@ def create_app(upstream=None):
             return JSONResponse({"detail": "Không tìm thấy đường dẫn"}, 404)
         if any(part in {".", ".."} for part in path.split("/")):
             return JSONResponse({"detail": "Đường dẫn không hợp lệ"}, 400)
-        cover = request.method == "POST" and path == "v1/covers"
+        cover = request.method == "POST" and path in {"v1/covers", "v1/lyrics"}
         limit = COVER_BODY_LIMIT if cover else JSON_BODY_LIMIT
         body = bytearray()
         async for chunk in request.stream():
@@ -160,6 +160,8 @@ def create_app(upstream=None):
                 headers=outgoing_headers,
                 content=bytes(body),
             )
+            if path == "v1/lyrics" and request.method == "POST":
+                outgoing.extensions["timeout"]["read"] = 900.0
             response = await app.state.client.send(outgoing, stream=True)
         except httpx.HTTPError:
             return JSONResponse(
@@ -192,7 +194,7 @@ def main():
 
     uvicorn.run(
         create_app(),
-        host="0.0.0.0",
+        host=os.environ.get("YUE2_WEB_HOST", "0.0.0.0"),
         port=int(os.environ.get("YUE2_WEB_PORT", "8016")),
         access_log=False,
     )

@@ -22,6 +22,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+lyrics = ["faster-whisper==1.2.1"]
 fast = ["vllm==0.19.0", "triton==3.6.0"]
 server = ["fastapi>=0.115,<1", "pydantic>=2.10,<3", "uvicorn>=0.34,<1",
           "httpx>=0.28,<1", "python-multipart>=0.0.18", "vllm==0.19.0", "triton==3.6.0",
