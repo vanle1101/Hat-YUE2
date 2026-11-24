@@ -1,8 +1,4 @@
-"""Public same-origin gateway for the private YuE2 GPU service.
-
-The browser supplies its own bearer credential. The gateway never embeds,
-stores, logs, or injects one.
-"""
+"""Cổng web công khai cho dịch vụ tạo nhạc YuE2 (không yêu cầu khóa API)."""
 from contextlib import asynccontextmanager
 import os
 from pathlib import Path
@@ -14,15 +10,24 @@ from starlette.background import BackgroundTask
 
 
 FORWARDED_REQUEST_HEADERS = (
-    "authorization", "content-type", "idempotency-key", "range",
+    "content-type", "idempotency-key", "range",
 )
 FORWARDED_RESPONSE_HEADERS = {
     "content-type", "content-disposition", "content-length", "content-range",
-    "accept-ranges", "retry-after", "www-authenticate",
+    "accept-ranges", "retry-after",
 }
-AUTH_PROBE_JOB = "0" * 32
 JSON_BODY_LIMIT = 256 * 1024
 COVER_BODY_LIMIT = 40 * 1024 * 1024
+
+
+def _default_runtime():
+    return {
+        "backend": os.environ.get("YUE2_BACKEND", "vllm"),
+        "device": os.environ.get("YUE2_DEVICE", "cuda"),
+        "ar_concurrency": int(os.environ.get("YUE2_AR_CONCURRENCY", "4")),
+        "nar_batch_size": int(os.environ.get("YUE2_NAR_BATCH_SIZE", "2")),
+        "ar_nar_overlap": os.environ.get("YUE2_AR_NAR_OVERLAP", "true").lower() == "true",
+    }
 
 
 def create_app(upstream=None):
@@ -81,52 +86,48 @@ def create_app(upstream=None):
         try:
             response = await app.state.client.get(upstream + "/health/ready")
             available = response.status_code == 200
+            runtime = _default_runtime()
+            if available:
+                try:
+                    load_resp = await app.state.client.get(upstream + "/internal/load")
+                    if load_resp.status_code == 200:
+                        info = load_resp.json()
+                        runtime = {
+                            "backend": info.get("backend", runtime["backend"]),
+                            "device": info.get("device", runtime["device"]),
+                            "ar_concurrency": info.get("ar_concurrency", runtime["ar_concurrency"]),
+                            "nar_batch_size": info.get("nar_batch_size", runtime["nar_batch_size"]),
+                            "ar_nar_overlap": info.get("ar_nar_overlap", runtime["ar_nar_overlap"]),
+                        }
+                except Exception:
+                    pass
             return {
                 "available": available,
                 "message": (
-                    "模型已就绪，可并行处理创作任务"
-                    if available else "模型正在加载，请稍后重试"
+                    "Mô hình đã sẵn sàng tạo nhạc"
+                    if available else "Mô hình đang được nạp, vui lòng thử lại sau"
                 ),
-                "runtime": {
-                    "backend": "vLLM",
-                    "ar_concurrency": 4,
-                    "nar_batch_size": 2,
-                    "ar_nar_overlap": True,
-                },
+                "runtime": runtime,
             }
         except httpx.HTTPError:
             return {
                 "available": False,
-                "message": "模型暂时离线，页面仍可使用，恢复后可提交任务",
+                "message": "Mô hình tạm thời ngoại tuyến, giao diện vẫn mở và sẽ gửi được tác vụ khi sẵn sàng",
             }
 
     @app.get("/console/connect")
-    async def console_connect(request: Request):
-        authorization = request.headers.get("authorization")
-        if not authorization:
-            return JSONResponse(
-                {"detail": "Missing bearer token"}, 401,
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+    async def console_connect():
         try:
-            response = await app.state.client.get(
-                f"{upstream}/v1/jobs/{AUTH_PROBE_JOB}",
-                headers={"authorization": authorization},
-            )
+            response = await app.state.client.get(upstream + "/health/ready")
         except httpx.HTTPError:
             return JSONResponse(
-                {"detail": "GPU 服务暂时不可用"}, 503,
+                {"detail": "Dịch vụ suy luận tạm thời không khả dụng"}, 503,
                 headers={"Retry-After": "10"},
             )
-        if response.status_code == 404:
+        if response.status_code == 200:
             return {"connected": True}
-        if response.status_code == 401:
-            return JSONResponse(
-                {"detail": "访问密钥无效"}, 401,
-                headers={"WWW-Authenticate": "Bearer"},
-            )
         return JSONResponse(
-            {"detail": "GPU 服务尚未就绪"},
+            {"detail": "Dịch vụ suy luận chưa sẵn sàng"},
             503,
             headers={"Retry-After": "10"},
         )
@@ -135,16 +136,16 @@ def create_app(upstream=None):
     async def proxy(path: str, request: Request):
         if not (path.startswith("v1/") or path in {
                 "health/live", "health/ready"}):
-            return JSONResponse({"detail": "Not found"}, 404)
+            return JSONResponse({"detail": "Không tìm thấy đường dẫn"}, 404)
         if any(part in {".", ".."} for part in path.split("/")):
-            return JSONResponse({"detail": "Invalid path"}, 400)
+            return JSONResponse({"detail": "Đường dẫn không hợp lệ"}, 400)
         cover = request.method == "POST" and path == "v1/covers"
         limit = COVER_BODY_LIMIT if cover else JSON_BODY_LIMIT
         body = bytearray()
         async for chunk in request.stream():
             body.extend(chunk)
             if len(body) > limit:
-                detail = "Request exceeds 40 MiB" if cover else "Request exceeds 256 KiB"
+                detail = "Dữ liệu yêu cầu vượt quá 40 MiB" if cover else "Dữ liệu yêu cầu vượt quá 256 KiB"
                 return JSONResponse({"detail": detail}, 413)
         outgoing_headers = {
             key: request.headers[key] for key in FORWARDED_REQUEST_HEADERS
@@ -162,7 +163,7 @@ def create_app(upstream=None):
             response = await app.state.client.send(outgoing, stream=True)
         except httpx.HTTPError:
             return JSONResponse(
-                {"detail": "GPU 服务暂时不可用，请稍后重试"},
+                {"detail": "Dịch vụ suy luận tạm thời không khả dụng, vui lòng thử lại sau"},
                 503,
                 headers={"Retry-After": "10"},
             )

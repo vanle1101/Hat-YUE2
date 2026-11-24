@@ -63,13 +63,13 @@ def load_requests(path):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--check", action="store_true", help="Print environment only; no model downloads")
+    parser = argparse.ArgumentParser(description="So sánh hiệu năng chạy GPU thực tế (không dùng số đo giả lập).")
+    parser.add_argument("--check", action="store_true", help="Chỉ in thông tin môi trường; không tải model")
     parser.add_argument("--requests", type=Path, default=Path("examples/song.json"))
     parser.add_argument("--output", type=Path, default=Path("outputs/benchmark"))
     parser.add_argument("--profiles", nargs="+", choices=PROFILES, default=["reference", "resident"])
     parser.add_argument("--repeats", type=int, default=1)
-    parser.add_argument("--warmup", type=int, default=1, help="Full warmup runs per profile, excluded from summary")
+    parser.add_argument("--warmup", type=int, default=1, help="Số lần chạy làm nóng trước mỗi cấu hình, không tính vào thống kê")
     parser.add_argument("--model", default="m-a-p/YuE2-3B")
     parser.add_argument("--vae", default="m-a-p/YuE2-Vae")
     parser.add_argument("--revision")
@@ -83,11 +83,11 @@ def main(argv=None):
         print(json.dumps(env, indent=2))
         return 0 if env.get("cuda_available") and env.get("bf16_supported") else 1
     if args.repeats < 1 or args.warmup < 0 or args.ode_steps < 1:
-        parser.error("repeats and ode-steps must be positive; warmup must be nonnegative")
+        parser.error("repeats và ode-steps phải dương; warmup phải không âm")
     if len(set(args.profiles)) != len(args.profiles):
-        parser.error("profiles must not repeat")
+        parser.error("profiles không được lặp lại")
     if not args.device.startswith("cuda") or not env.get("cuda_available"):
-        parser.error("A CUDA GPU is required for this performance benchmark")
+        parser.error("Bài kiểm tra benchmark này yêu cầu có GPU CUDA")
     from .pipeline import YuE2Pipeline
     from .protocol import GenerationConfig
     from .sampling import synchronize

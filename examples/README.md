@@ -1,32 +1,30 @@
-# Original examples
+# Các ví dụ mẫu
 
-`song.json` contains the original **City Lights** lyrics and style request used by the agent skill. `melody.abc` is a short, original eight-bar melody for those words. Each lyric line has seven syllables and each bar has seven note onsets. `score.abc` adds harmony; `score-jazz.abc` changes only the chord symbols. These are runnable inputs, not recorded benchmark or quality results.
+`song.json` chứa lời bài hát và mô tả phong cách mẫu **City Lights**. `melody.abc` là bản nhạc giai điệu 8 ô nhịp tương ứng. `score.abc` bổ sung phần hòa âm; `score-jazz.abc` thay đổi các ký hiệu hợp âm.
 
-From the repository root, after `pip install .`:
+Từ thư mục gốc của repository:
 
 ```bash
-# Create a song and its score from lyrics and style.
+# Tạo bài hát và bản nhạc từ lời và phong cách.
 python examples/generate.py --output outputs/create
 
-# Realize the included melody with free accompaniment.
+# Hiện thực hóa giai điệu có sẵn với phần đệm tự do.
 python examples/generate.py --abc-file examples/melody.abc \
   --cot melody --output outputs/melody
 
-# Compare two harmonizations with the same melody, lyrics, style, and seed.
+# So sánh hai cách hòa âm với cùng giai điệu, lời bài hát, phong cách và hạt giống.
 python examples/generate.py --abc-file examples/score.abc \
   --cot full --output outputs/harmony-original
 python examples/generate.py --abc-file examples/score-jazz.abc \
   --cot full --output outputs/harmony-edited
 ```
 
-The script preserves all native artifacts, refuses an existing output directory, and exits nonzero if generation reports truncation. The seed is fixed in `song.json`; seeds aid comparison but do not guarantee identical output across devices or software versions. Use `--revision` and `--vae-revision` to pin model versions.
+Script lưu toàn bộ kết quả gốc, từ chối ghi đè thư mục đã tồn tại và báo lỗi nếu quá trình sinh bị cắt ngắn. Dùng `--revision` và `--vae-revision` để cố định phiên bản model.
 
-Check the symbolic intervention without a GPU:
+Kiểm tra can thiệp bản nhạc ABC không cần GPU:
 
 ```bash
 python skills/yue2-music/scripts/abc_tools.py inspect examples/score.abc
 python skills/yue2-music/scripts/abc_tools.py compare \
   examples/score.abc examples/score-jazz.abc
 ```
-
-The comparison verifies unchanged note pitches, timing, meter, and tempo. Listening or audio transcription is still needed to assess the realized music.

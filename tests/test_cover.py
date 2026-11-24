@@ -43,7 +43,7 @@ def test_transcribe_requests_melody_only_without_writing_a_score(tmp_path):
 
 def test_service_defaults_sheetsage_to_auto():
     from yue2.service import Settings
-    assert Settings(api_key="k" * 16).sheetsage_device == "auto"
+    assert Settings().sheetsage_device == "auto"
 
 
 def test_cover_cli_requires_audio_and_pins_sheetsage():

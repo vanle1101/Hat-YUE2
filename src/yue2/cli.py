@@ -75,7 +75,7 @@ def doctor(args):
     report = {"dependencies_ready": all(versions.values()), "versions": versions,
               "cuda": devices, "mps_available": torch.backends.mps.is_available(),
               "model": model, "vae": vae, "default_cot": "full", "default_cfg": {"full": 1., "melody": 1., "off": 1.01},
-              "validated": False, "note": "Environment readiness is not quality or real-24GB acceptance."}
+              "validated": False, "note": "Kiểm tra môi trường sẵn sàng chưa phải đánh giá chất lượng hay hiệu năng GPU 24GB."}
     if args.verify_hashes:
         from .storage import resolve_model
         report["weights"] = {"model": model_identity(resolve_model(model, local_files_only=args.offline)),
@@ -110,8 +110,8 @@ def generate(args):
         data["abc"] = Path(args.abc_file).read_bytes().decode("utf-8")
         data.pop("abc_path", None)
     if not data:
-        data = {"id": "first_song", "style": "Mandarin, warm piano, acoustic pop, female vocal",
-                "lyrics": "[Verse]\n晚风轻轻吹过窗前\n你留下的笑还在昨天\n[Chorus]\n让这首歌陪你走远\n把所有想念唱成明天"}
+        data = {"id": "first_song", "style": "Vietnamese, warm piano, acoustic pop, female vocal",
+                "lyrics": "[Verse]\nChiều buông nhẹ qua khung cửa nhỏ\nNụ cười xưa vẫn còn đâu đây\n[Chorus]\nĐể câu hát đưa ta đi thật xa\nGửi yêu thương vào từng sớm mai"}
     kwargs = request_kwargs(data, base)
     pipe = get_pipe(args)
     directory = Path(args.output or "runs/default") / kwargs.get("id", "song")
@@ -207,49 +207,49 @@ def batch(args):
 
 
 def parser():
-    p = argparse.ArgumentParser(description="YuE2: style + lyrics → symbolic plan → song")
+    p = argparse.ArgumentParser(description="YuE2: phong cách + lời bài hát → bản nhạc → bài hát hoàn chỉnh")
     sub = p.add_subparsers(dest="command", required=True)
     for name in ("doctor", "generate", "batch", "cover"):
         q = sub.add_parser(name)
-        q.add_argument("--model")
-        q.add_argument("--vae", default="standard", help="standard (listening), legacy (paper evaluation), local path or HF repo")
-        q.add_argument("--revision")
-        q.add_argument("--vae-revision")
-        q.add_argument("--device", default="auto")
-        q.add_argument("--budget", type=float, default=24)
-        q.add_argument("--backend", choices=("torch", "torch-eager", "vllm"), default="torch")
-        q.add_argument("--quantization", choices=("none", "fp8"), default="none")
-        q.add_argument("--offload-ar", action="store_true")
-        q.add_argument("--offline", action="store_true")
-        q.add_argument("--config")
-        q.add_argument("--output")
+        q.add_argument("--model", help="Đường dẫn thư mục hoặc repo Hugging Face của YuE2-3B")
+        q.add_argument("--vae", default="standard", help="standard (nghe nhạc), legacy (đánh giá benchmark), đường dẫn cục bộ hoặc repo HF")
+        q.add_argument("--revision", help="Phiên bản commit của model YuE2")
+        q.add_argument("--vae-revision", help="Phiên bản commit của VAE")
+        q.add_argument("--device", default="auto", help="Thiết bị chạy: auto, cpu, cuda, mps")
+        q.add_argument("--budget", type=float, default=24, help="Ngân sách bộ nhớ (GiB)")
+        q.add_argument("--backend", choices=("torch", "torch-eager", "vllm"), default="torch", help="Backend suy luận AR")
+        q.add_argument("--quantization", choices=("none", "fp8"), default="none", help="Chế độ lượng tử hóa")
+        q.add_argument("--offload-ar", action="store_true", help="Giải phóng phần AR khỏi GPU khi không dùng")
+        q.add_argument("--offline", action="store_true", help="Chỉ dùng tệp cục bộ, không tải từ Hugging Face")
+        q.add_argument("--config", help="Đường dẫn tệp JSON cấu hình sinh")
+        q.add_argument("--output", help="Thư mục lưu kết quả đầu ra")
         if name == "doctor":
-            q.add_argument("--verify-hashes", action="store_true")
+            q.add_argument("--verify-hashes", action="store_true", help="Kiểm tra SHA-256 toàn bộ tệp trọng số")
         else:
-            q.add_argument("--cot", choices=("full", "melody", "off"))
-            q.add_argument("--resume", action="store_true")
+            q.add_argument("--cot", choices=("full", "melody", "off"), help="Chế độ lập bản nhạc (full, melody, off)")
+            q.add_argument("--resume", action="store_true", help="Bỏ qua nếu thư mục kết quả đã hoàn tất hợp lệ")
             q.add_argument("--quiet", "--no-progress", action="store_true",
-                           help="Hide YuE2 progress on stderr; keep result output on stdout")
+                           help="Ẩn thanh tiến trình trên stderr; vẫn giữ kết quả JSON trên stdout")
             if name == "batch":
-                q.add_argument("--input", required=True)
-                q.add_argument("--concurrency", type=int, default=1)
+                q.add_argument("--input", required=True, help="Tệp JSONL danh sách bài hát cần tạo")
+                q.add_argument("--concurrency", type=int, default=1, help="Số luồng xử lý song song (mặc định 1)")
             else:
-                q.add_argument("--request")
-                q.add_argument("--id")
-                q.add_argument("--style")
-                q.add_argument("--lyrics")
-                q.add_argument("--lyrics-file")
-                q.add_argument("--seed", type=int)
-                q.add_argument("--cfg-scale", type=float)
+                q.add_argument("--request", help="Đường dẫn tệp JSON yêu cầu")
+                q.add_argument("--id", help="Mã định danh bài hát")
+                q.add_argument("--style", help="Mô tả phong cách âm nhạc")
+                q.add_argument("--lyrics", help="Lời bài hát trực tiếp")
+                q.add_argument("--lyrics-file", help="Đường dẫn tệp chứa lời bài hát")
+                q.add_argument("--seed", type=int, help="Hạt giống ngẫu nhiên")
+                q.add_argument("--cfg-scale", type=float, help="Hệ số bám sát văn bản CFG")
                 if name == "cover":
-                    q.add_argument("--audio", type=Path, required=True)
-                    q.add_argument("--sheetsage", default="m-a-p/SheetSage2")
-                    q.add_argument("--sheetsage-revision")
-                    q.add_argument("--sheetsage-device", choices=("off", "cpu", "cuda", "auto"), default="auto")
-                    q.add_argument("--sheetsage-min-free-gib", type=float, default=8)
+                    q.add_argument("--audio", type=Path, required=True, help="Tệp âm thanh nguồn để cover")
+                    q.add_argument("--sheetsage", default="m-a-p/SheetSage2", help="Repo hoặc thư mục SheetSage2")
+                    q.add_argument("--sheetsage-revision", help="Phiên bản commit SheetSage2")
+                    q.add_argument("--sheetsage-device", choices=("off", "cpu", "cuda", "auto"), default="auto", help="Thiết bị chạy SheetSage2")
+                    q.add_argument("--sheetsage-min-free-gib", type=float, default=8, help="VRAM trống tối thiểu (GiB) để đặt SheetSage2 lên GPU")
                 else:
-                    q.add_argument("--abc-file")
-                    q.add_argument("--stage", choices=("plan", "audio"), default="audio")
+                    q.add_argument("--abc-file", help="Đường dẫn tệp bản nhạc ABC đầu vào")
+                    q.add_argument("--stage", choices=("plan", "audio"), default="audio", help="Chỉ lập bản nhạc (plan) hay tạo cả âm thanh (audio)")
     return p
 
 

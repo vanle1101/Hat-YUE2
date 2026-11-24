@@ -14,8 +14,6 @@ from pydantic import ValidationError
 from yue2.service import _AROverlapControl, GenerateRequest, JobWorker, Settings, create_app
 from yue2.service_store import JobStore, QueueFull
 
-KEY = "test-only-api-key-123456789"
-HEADERS = {"Authorization": f"Bearer {KEY}"}
 REQUEST = {"style": "piano pop", "lyrics": "[Verse]\nAn original song", "seed": 42}
 
 
@@ -86,9 +84,9 @@ class FakeTranscriber:
 @contextmanager
 def service(tmp_path, fake=None, transcriber=None, **options):
     fake = fake or FakePipeline()
-    app = create_app(Settings(api_key=KEY, data_dir=tmp_path, warmup=False, **options),
+    app = create_app(Settings(data_dir=tmp_path, warmup=False, **options),
                      lambda settings: fake, transcriber=transcriber)
-    with TestClient(app, headers=HEADERS) as client:
+    with TestClient(app) as client:
         wait_for(lambda: client.get("/health/ready").status_code == 200)
         yield client, fake, app
 
@@ -106,10 +104,9 @@ def terminal(client, job_id):
     return wait_for(check)
 
 
-def test_http_success_auth_artifacts_and_reuse(tmp_path):
+def test_http_success_artifacts_and_reuse(tmp_path):
     with service(tmp_path) as (client, pipe, app):
         assert client.get("/health/live").status_code == 200
-        assert client.post("/v1/jobs", json=REQUEST, headers={"Authorization": "Bearer wrong"}).status_code == 401
         first = submit(client)
         result = terminal(client, first)
         assert result["status"] == "succeeded"
@@ -117,7 +114,6 @@ def test_http_success_auth_artifacts_and_reuse(tmp_path):
         assert result["tokens"]["abc"] == 1
         assert client.get(result["result"]["audio_url"]).content == b"fake-audio-for-transport-test"
         assert client.get(result["result"]["score_url"]).text.startswith("X:1")
-        assert client.get(result["result"]["audio_url"], headers={"Authorization": ""}).status_code == 401
         second = submit(client, seed=43)
         assert terminal(client, second)["status"] == "succeeded"
         assert pipe.calls == 2 and pipe.preloaded and not pipe.closed
@@ -128,7 +124,7 @@ def test_http_success_auth_artifacts_and_reuse(tmp_path):
 
 
 def test_artifact_cleanup_enforces_cap_and_retention_without_deleting_active(tmp_path):
-    settings = Settings(api_key=KEY, data_dir=tmp_path, warmup=False,
+    settings = Settings(data_dir=tmp_path, warmup=False,
                         artifact_retention_seconds=1000,
                         artifact_max_gib=20 / 1024 ** 3)
     worker = JobWorker(settings, lambda _: FakePipeline())
@@ -209,8 +205,8 @@ def test_restart_recovers_running_but_preserves_queued(tmp_path):
 
 def test_exclusive_worker_lock(tmp_path):
     with service(tmp_path):
-        other = create_app(Settings(api_key=KEY, data_dir=tmp_path, warmup=False), lambda settings: FakePipeline())
-        with pytest.raises(RuntimeError, match="already has a worker"):
+        other = create_app(Settings(data_dir=tmp_path, warmup=False), lambda settings: FakePipeline())
+        with pytest.raises(RuntimeError, match="đã có một worker"):
             with TestClient(other):
                 pass
     with service(tmp_path):
@@ -220,8 +216,8 @@ def test_exclusive_worker_lock(tmp_path):
 def test_initialization_failure_readiness(tmp_path):
     def fail(settings):
         raise RuntimeError("no GPU")
-    app = create_app(Settings(api_key=KEY, data_dir=tmp_path), fail)
-    with TestClient(app, headers=HEADERS) as client:
+    app = create_app(Settings(data_dir=tmp_path), fail)
+    with TestClient(app) as client:
         wait_for(lambda: app.state.worker.startup_error)
         assert client.get("/health/ready").status_code == 503
         assert client.get("/health/live").status_code == 200
@@ -231,8 +227,8 @@ def test_initialization_failure_readiness(tmp_path):
 def test_generation_failure_is_sanitized_and_pipeline_rebuilt(tmp_path):
     pipes = [FakePipeline(failure=True), FakePipeline()]
     factories = iter(pipes)
-    app = create_app(Settings(api_key=KEY, data_dir=tmp_path, warmup=False), lambda settings: next(factories))
-    with TestClient(app, headers=HEADERS) as client:
+    app = create_app(Settings(data_dir=tmp_path, warmup=False), lambda settings: next(factories))
+    with TestClient(app) as client:
         wait_for(lambda: app.state.worker.ready)
         job = terminal(client, submit(client))
         assert job["status"] == "failed" and job["error"]["code"] == "inference_failed"
@@ -260,9 +256,9 @@ def test_rebuild_does_not_retain_failed_inference_frames(tmp_path):
         # this test so it measures only the worker's own frame lifetime.
         assert references[0]() is None
         return FakePipeline()
-    app = create_app(Settings(api_key=KEY, data_dir=tmp_path, warmup=False), factory)
+    app = create_app(Settings(data_dir=tmp_path, warmup=False), factory)
     from unittest.mock import patch
-    with patch("yue2.service.log.exception"), TestClient(app, headers=HEADERS) as client:
+    with patch("yue2.service.log.exception"), TestClient(app) as client:
         wait_for(lambda: app.state.worker.ready)
         assert terminal(client, submit(client))["status"] == "failed"
         wait_for(lambda: calls == 2 and app.state.worker.ready)
@@ -345,7 +341,7 @@ def test_cover_transcription_failure_does_not_generate(tmp_path):
 
 
 def test_cover_audio_path_stays_in_covers_directory(tmp_path):
-    worker = JobWorker(Settings(api_key=KEY, data_dir=tmp_path, warmup=False), lambda _: FakePipeline())
+    worker = JobWorker(Settings(data_dir=tmp_path, warmup=False), lambda _: FakePipeline())
     outside = tmp_path / "secret.bin"
     outside.write_bytes(b"no")
     with pytest.raises(ValueError):
@@ -417,7 +413,7 @@ def test_worker_batches_vllm_ar_and_serializes_render(tmp_path):
                         "audio_seconds": 1, "sample_rate": 48000, "timing": {"seed": seed}}
             return SimpleNamespace(abc=None, config={"backend": "vllm"}, save_artifacts=save)
 
-    settings = Settings(api_key=KEY, data_dir=tmp_path, warmup=False, ar_concurrency=2,
+    settings = Settings(data_dir=tmp_path, warmup=False, ar_concurrency=2,
                         vllm_max_num_seqs=2, nar_batch_size=2)
     pipe = ParallelPipeline()
     worker = JobWorker(settings, lambda _: pipe)
@@ -485,7 +481,7 @@ def test_worker_overlaps_next_ar_wave_or_waits_on_pressure(tmp_path, mode):
                         "audio_seconds": 1, "sample_rate": 48000, "timing": {"seed": seed}}
             return SimpleNamespace(abc=None, config={}, save_artifacts=save)
 
-    settings = Settings(api_key=KEY, data_dir=tmp_path, warmup=False, ar_concurrency=2,
+    settings = Settings(data_dir=tmp_path, warmup=False, ar_concurrency=2,
                         vllm_max_num_seqs=2, nar_batch_size=2, ar_batch_wait_ms=0)
     pipe = OverlapPipeline()
     worker = JobWorker(settings, lambda _: pipe)
@@ -556,7 +552,7 @@ def test_overlap_rebuild_waits_for_inflight_ar_and_resolves_next_wave(tmp_path, 
         def render_ar(self, seed, **kwargs):
             return self.render_nar(seed)
 
-    settings = Settings(api_key=KEY, data_dir=tmp_path, warmup=False, ar_concurrency=2,
+    settings = Settings(data_dir=tmp_path, warmup=False, ar_concurrency=2,
                         vllm_max_num_seqs=2, ar_batch_wait_ms=0)
     pipe = RebuildPipeline()
     loads = 0
@@ -620,7 +616,7 @@ def test_prefetched_exclusive_wave_gets_execution_deadline_when_consumed(tmp_pat
                         "audio_seconds": 1, "sample_rate": 48000, "timing": {"seed": seed}}
             return SimpleNamespace(abc=None, config={}, save_artifacts=save)
 
-    settings = Settings(api_key=KEY, data_dir=tmp_path, warmup=False, ar_concurrency=2,
+    settings = Settings(data_dir=tmp_path, warmup=False, ar_concurrency=2,
                         vllm_max_num_seqs=2, ar_batch_wait_ms=0, task_timeout_seconds=.05)
     pipe = ExclusivePipeline()
     worker = JobWorker(settings, lambda _: pipe)
@@ -674,7 +670,7 @@ def test_worker_batches_nar_in_fifo_windows_and_keeps_vae_serial(tmp_path):
         def render_ar(self, seed, **kwargs):
             raise AssertionError(f"Unexpected serial NAR fallback for {seed}")
 
-    settings = Settings(api_key=KEY, data_dir=tmp_path, warmup=False)
+    settings = Settings(data_dir=tmp_path, warmup=False)
     pipe = BatchedPipeline()
     worker = JobWorker(settings, lambda _: pipe)
     worker.pipeline = pipe
@@ -720,7 +716,7 @@ def test_worker_falls_back_to_single_rows_after_batch_two_oom(tmp_path):
             self.serial.append(seed)
             return self.render_nar(seed)
 
-    settings = Settings(api_key=KEY, data_dir=tmp_path, warmup=False)
+    settings = Settings(data_dir=tmp_path, warmup=False)
     pipe = RuntimeFallbackPipeline()
     worker = JobWorker(settings, lambda _: pipe)
     worker.pipeline = pipe
@@ -743,7 +739,7 @@ def test_memory_error_while_saving_does_not_retry_render(tmp_path):
                 raise MemoryError("host save allocation failed")
             return SimpleNamespace(abc=None, config={}, save_artifacts=save)
 
-    settings = Settings(api_key=KEY, data_dir=tmp_path, warmup=False)
+    settings = Settings(data_dir=tmp_path, warmup=False)
     pipe = SaveFailurePipeline()
     worker = JobWorker(settings, lambda _: pipe)
     worker.pipeline = pipe
@@ -779,7 +775,7 @@ def test_worker_keeps_nar_row_failure_independent(tmp_path):
         def render_ar(self, seed, **kwargs):
             raise AssertionError(f"Unexpected single-row fallback for {seed}")
 
-    settings = Settings(api_key=KEY, data_dir=tmp_path, warmup=False, nar_batch_size=2)
+    settings = Settings(data_dir=tmp_path, warmup=False, nar_batch_size=2)
     pipe = RowFailurePipeline()
     worker = JobWorker(settings, lambda _: pipe)
     worker.pipeline = pipe
@@ -816,7 +812,7 @@ def test_worker_does_not_reorder_fifo_across_ineligible_job(tmp_path):
                         "audio_seconds": 1, "sample_rate": 48000, "timing": {"seed": seed}}
             return SimpleNamespace(abc=None, config={}, save_artifacts=save)
 
-    settings = Settings(api_key=KEY, data_dir=tmp_path, warmup=False, nar_batch_size=2)
+    settings = Settings(data_dir=tmp_path, warmup=False, nar_batch_size=2)
     pipe = MixedPipeline()
     worker = JobWorker(settings, lambda _: pipe)
     worker.pipeline = pipe
@@ -839,8 +835,7 @@ def test_cancel_racing_success_cannot_publish_result(tmp_path):
     assert store.get(job["id"])["result"] is None
 
 
-def test_environment_settings_validate_and_hide_secret(monkeypatch):
-    monkeypatch.setenv("YUE2_API_KEY", KEY)
+def test_environment_settings_validate(monkeypatch):
     monkeypatch.delenv("YUE2_RESIDENT_MODELS", raising=False)
     monkeypatch.setenv("YUE2_BACKEND", "vllm")
     settings = Settings.from_env()
@@ -853,12 +848,11 @@ def test_environment_settings_validate_and_hide_secret(monkeypatch):
     assert settings.artifact_retention_seconds == 86400
     assert settings.artifact_max_gib == 5
     assert settings.artifact_cleanup_interval_seconds == 300
-    assert KEY not in repr(settings)
     with pytest.raises(ValidationError):
-        Settings(api_key=KEY, vllm_gpu_memory_utilization=1)
+        Settings(vllm_gpu_memory_utilization=1)
     with pytest.raises(ValidationError):
-        Settings(api_key=KEY, vllm_max_num_batched_tokens=24577)
+        Settings(vllm_max_num_batched_tokens=24577)
     with pytest.raises(ValidationError):
-        Settings(api_key=KEY, nar_batch_size=3)
-    compatible = Settings(api_key=KEY, ar_concurrency=2, vllm_max_num_seqs=2)
+        Settings(nar_batch_size=3)
+    compatible = Settings(ar_concurrency=2, vllm_max_num_seqs=2)
     assert compatible.nar_batch_size == 2

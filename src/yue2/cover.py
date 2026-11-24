@@ -12,7 +12,7 @@ GENERATION_FIELDS = (
     "abc_sampling", "semantic_sampling",
 )
 SHEETSAGE_DEVICES = ("off", "cpu", "cuda", "auto")
-COVER_DISABLED = "翻唱未启用。将 YUE2_SHEETSAGE_DEVICE 设为 auto 或 cpu 后重启服务。"
+COVER_DISABLED = "Tính năng cover chưa được bật. Hãy đặt YUE2_SHEETSAGE_DEVICE thành auto hoặc cpu rồi khởi động lại dịch vụ."
 
 log = logging.getLogger("yue2.cover")
 

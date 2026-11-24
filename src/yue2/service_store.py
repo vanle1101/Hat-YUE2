@@ -54,7 +54,7 @@ class JobStore:
             for row in db.execute("SELECT snapshot FROM jobs WHERE status='running'").fetchall():
                 job = json.loads(row[0])
                 job.update(status="failed", stage="finished", finished_at=time.time(),
-                           error={"code": "worker_interrupted", "message": "Worker stopped during generation; submit a new job."})
+                           error={"code": "worker_interrupted", "message": "Dịch vụ đã dừng giữa chừng khi đang tạo nhạc; vui lòng gửi lại tác vụ mới."})
                 self._write(db, job)
 
     def submit(self, request, max_pending, idem_key=None, n=1, admission_id=None):

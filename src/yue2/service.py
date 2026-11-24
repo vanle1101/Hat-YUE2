@@ -8,23 +8,50 @@ from __future__ import annotations
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, suppress
-import fcntl
+import errno
 import gc
 import hashlib
 import json
 import logging
 import os
 from pathlib import Path
-import secrets
 import shutil
 import threading
 import time
 import uuid
 from typing import Literal
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
+    import msvcrt
+
+
+def _acquire_worker_lock(handle):
+    """Acquire a non-blocking exclusive lock across POSIX and Windows."""
+    if fcntl is not None:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return
+    handle.seek(0)
+    try:
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError as exc:
+        if exc.errno in (errno.EACCES, errno.EDEADLK, errno.EAGAIN):
+            raise BlockingIOError("Worker lock already held") from exc
+        raise
+
+
+def _release_worker_lock(handle):
+    """Release the worker lock before closing the handle."""
+    if fcntl is None:
+        with suppress(OSError, ValueError):
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+    handle.close()
+
+from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from .cover import COVER_AUDIO_KEY, COVER_DISABLED, COVER_SHA_KEY, generation_fields
@@ -38,7 +65,6 @@ log = logging.getLogger("yue2.service")
 
 class Settings(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    api_key: str = Field(min_length=16, repr=False)
     data_dir: Path = Path("outputs/service")
     model: str = "m-a-p/YuE2-3B"
     vae: str = "m-a-p/YuE2-Vae"
@@ -73,9 +99,9 @@ class Settings(BaseModel):
     @model_validator(mode="after")
     def compatible_backend(self):
         if self.backend == "vllm" and self.quantization != "none":
-            raise ValueError("The current vLLM adapter does not support FP8")
+            raise ValueError("Backend vLLM hiện chưa hỗ trợ lượng tử hóa FP8")
         if self.backend == "vllm" and self.ar_concurrency > self.vllm_max_num_seqs:
-            raise ValueError("YUE2_AR_CONCURRENCY cannot exceed YUE2_VLLM_MAX_NUM_SEQS")
+            raise ValueError("YUE2_AR_CONCURRENCY không được vượt quá YUE2_VLLM_MAX_NUM_SEQS")
         return self
 
     @classmethod
@@ -98,13 +124,13 @@ class GenerateRequest(BaseModel):
     @classmethod
     def nonblank(cls, value):
         if value is not None and not value.strip():
-            raise ValueError("Text must not be blank")
+            raise ValueError("Nội dung văn bản không được để trống")
         return value
 
     @model_validator(mode="after")
     def score_mode(self):
         if self.abc is not None and self.cot == "off":
-            raise ValueError("ABC requires cot=full or melody")
+            raise ValueError("Nhập bản nhạc ABC yêu cầu chế độ cot=full hoặc melody")
         return self
 
 
@@ -204,17 +230,17 @@ class JobWorker:
     def start(self):
         self.lock_file = (self.root / "worker.lock").open("a+")
         try:
-            fcntl.flock(self.lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            _acquire_worker_lock(self.lock_file)
         except BlockingIOError:
             self.lock_file.close()
             self.lock_file = None
-            raise RuntimeError("This data directory already has a worker. Use one Uvicorn worker per GPU.") from None
+            raise RuntimeError("Thư mục dữ liệu này đã có một worker khác đang chạy. Mỗi tiến trình chỉ dùng một thư mục dữ liệu.") from None
         try:
             self.store.recover()
             self.thread = threading.Thread(target=self._run, name="yue2-gpu", daemon=True)
             self.thread.start()
         except BaseException:
-            self.lock_file.close()
+            _release_worker_lock(self.lock_file)
             self.lock_file = None
             raise
 
@@ -230,7 +256,7 @@ class JobWorker:
         if self.thread is not None:
             self.thread.join()  # cooperative cancellation; supervisor may force-stop a stuck CUDA driver
         if self.lock_file is not None:
-            self.lock_file.close()
+            _release_worker_lock(self.lock_file)
             self.lock_file = None
 
     @staticmethod
@@ -541,18 +567,18 @@ class JobWorker:
             if (time.monotonic() >= context["deadline"] and not context["cancel_event"].is_set()
                     and not self.stop_event.is_set()):
                 self.store.finish(job_id, "failed", error={
-                    "code": "timeout", "message": "Generation exceeded its execution deadline."})
+                    "code": "timeout", "message": "Quá thời gian xử lý tối đa cho phép."})
             else:
                 self.store.finish(job_id, "cancelled")
             return False
         # Do not pass the exception object to logging handlers: handlers/mocks
         # may retain traceback frames and the tensors referenced by them.
-        log.exception("Generation failed: job=%s", job_id)
+        log.exception("Tạo nhạc thất bại: job=%s", job_id)
         invalid = isinstance(error, (ValueError, TypeError))
         self.store.finish(job_id, "failed", error={
             "code": "invalid_generation" if invalid else "inference_failed",
-            "message": ("Input could not be generated; check score and context length." if invalid
-                        else "Inference failed; see worker logs with this job ID."),
+            "message": ("Đầu vào không hợp lệ; hãy kiểm tra bản nhạc ABC và độ dài ngữ cảnh." if invalid
+                        else "Quá trình suy luận gặp lỗi; hãy xem log worker theo mã tác vụ."),
         })
         return not invalid
 
@@ -808,7 +834,7 @@ class BodyLimit:
             return await self.app(scope, receive, send)
         cover = scope.get("path") == "/v1/covers"
         limit = self.cover_limit if cover else self.limit
-        detail = "Request body exceeds 40 MiB" if cover else "Request body exceeds 256 KiB"
+        detail = "Dữ liệu yêu cầu vượt quá 40 MiB" if cover else "Dữ liệu yêu cầu vượt quá 256 KiB"
         body = bytearray()
         while True:
             message = await receive()
@@ -872,16 +898,11 @@ def create_app(settings=None, pipeline_factory=None, transcriber=None):
     app = FastAPI(title="Noiz YuE2", version="0.1.0", lifespan=lifespan)
     app.state.worker = worker
     app.add_middleware(BodyLimit)
-    bearer = HTTPBearer(auto_error=False)
-
-    def authorize(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
-        if credentials is None or not secrets.compare_digest(credentials.credentials.encode(), settings.api_key.encode()):
-            raise HTTPException(401, "Invalid bearer token", headers={"WWW-Authenticate": "Bearer"})
 
     def get_job(job_id):
         job = worker.store.get(job_id)
         if job is None:
-            raise HTTPException(404, "Job not found")
+            raise HTTPException(404, "Không tìm thấy tác vụ")
         return job
 
     @app.get("/health/live")
@@ -894,28 +915,30 @@ def create_app(settings=None, pipeline_factory=None, transcriber=None):
             return JSONResponse({"status": "failed" if worker.startup_error else "loading"}, status_code=503)
         return {"status": "ready"}
 
-    @app.get("/internal/load", dependencies=[Depends(authorize)])
+    @app.get("/internal/load")
     def load():
         return {**worker.store.load_snapshot(), "schema_version": 1,
                 "boot_id": worker.boot_id,
                 "ready": worker.ready and not (worker.root / "draining").exists(),
+                "backend": settings.backend, "device": settings.device,
+                "ar_nar_overlap": settings.ar_nar_overlap,
                 "capacity": settings.max_pending, "ar_concurrency": settings.ar_concurrency,
                 "nar_batch_size": settings.nar_batch_size}
 
-    @app.post("/v1/jobs", status_code=202, dependencies=[Depends(authorize)])
+    @app.post("/v1/jobs", status_code=202)
     def submit(request: GenerateRequest, idempotency_key: str | None = Header(default=None, min_length=1, max_length=128), x_admission_id: str | None = Header(default=None, max_length=128)):
         if (worker.root / "draining").exists() or not worker.ready or worker.stop_event.is_set():
-            raise HTTPException(503, "Inference worker is not ready", headers={"Retry-After": "5"})
+            raise HTTPException(503, "Dịch vụ suy luận chưa sẵn sàng", headers={"Retry-After": "5"})
         try:
             job, created = worker.store.submit(request.model_dump(exclude={"n"}), settings.max_pending, idempotency_key, n=request.n, admission_id=x_admission_id)
         except QueueFull:
-            raise HTTPException(429, "Queue is full", headers={"Retry-After": "5"}) from None
+            raise HTTPException(429, "Hàng đợi đã đầy", headers={"Retry-After": "5"}) from None
         except IdempotencyConflict:
-            raise HTTPException(409, "Idempotency-Key was already used with different input") from None
+            raise HTTPException(409, "Idempotency-Key đã được dùng cho đầu vào khác") from None
         worker.wake.set()
         return JSONResponse(job, status_code=202 if created else 200, headers={"Location": f"/v1/jobs/{job['id']}"})
 
-    @app.post("/v1/covers", status_code=202, dependencies=[Depends(authorize)])
+    @app.post("/v1/covers", status_code=202)
     async def cover(
             audio: UploadFile = File(),
             style: str = Form(),
@@ -925,18 +948,18 @@ def create_app(settings=None, pipeline_factory=None, transcriber=None):
             idempotency_key: str | None = Header(default=None, min_length=1, max_length=128),
             x_admission_id: str | None = Header(default=None, max_length=128)):
         if (worker.root / "draining").exists() or not worker.ready or worker.stop_event.is_set():
-            raise HTTPException(503, "Inference worker is not ready", headers={"Retry-After": "5"})
+            raise HTTPException(503, "Dịch vụ suy luận chưa sẵn sàng", headers={"Retry-After": "5"})
         if settings.sheetsage_device == "off":
             raise HTTPException(503, COVER_DISABLED)
         payload = await audio.read()
         if not payload:
-            raise HTTPException(422, "Audio file is empty")
+            raise HTTPException(422, "Tệp âm thanh trống")
         if len(payload) > COVER_BODY_LIMIT:
-            raise HTTPException(413, "Request body exceeds 40 MiB")
+            raise HTTPException(413, "Dữ liệu yêu cầu vượt quá 40 MiB")
         try:
             public = GenerateRequest(style=style, lyrics=lyrics, cot="melody", seed=seed, cfg_scale=cfg_scale)
         except ValidationError as exc:
-            message = exc.errors()[0]["msg"] if exc.errors() else "Invalid cover request"
+            message = exc.errors()[0]["msg"] if exc.errors() else "Yêu cầu cover không hợp lệ"
             raise HTTPException(422, message) from None
         digest = hashlib.sha256(payload).hexdigest()
         covers = worker.root / "covers"
@@ -953,37 +976,37 @@ def create_app(settings=None, pipeline_factory=None, transcriber=None):
             job, created = worker.store.submit(
                 request, settings.max_pending, idempotency_key, admission_id=x_admission_id)
         except QueueFull:
-            raise HTTPException(429, "Queue is full", headers={"Retry-After": "5"}) from None
+            raise HTTPException(429, "Hàng đợi đã đầy", headers={"Retry-After": "5"}) from None
         except IdempotencyConflict:
-            raise HTTPException(409, "Idempotency-Key was already used with different input") from None
+            raise HTTPException(409, "Idempotency-Key đã được dùng cho đầu vào khác") from None
         worker.wake.set()
         return JSONResponse(job, status_code=202 if created else 200, headers={"Location": f"/v1/jobs/{job['id']}"})
 
-    @app.get("/v1/jobs/{job_id}", dependencies=[Depends(authorize)])
+    @app.get("/v1/jobs/{job_id}")
     def status(job_id: str):
         return get_job(job_id)
 
-    @app.post("/v1/jobs/{job_id}/cancel", dependencies=[Depends(authorize)])
+    @app.post("/v1/jobs/{job_id}/cancel")
     def cancel(job_id: str):
         job = worker.cancel(job_id)
         if job is None:
-            raise HTTPException(404, "Job not found")
+            raise HTTPException(404, "Không tìm thấy tác vụ")
         return job
 
     def artifact(job_id, name, media):
         job = get_job(job_id)
         if job["status"] not in {"succeeded", "truncated"}:
-            raise HTTPException(409, "Artifact is not available for this job state")
+            raise HTTPException(409, "Tệp kết quả chưa khả dụng ở trạng thái tác vụ hiện tại")
         path = worker.root / "artifacts" / job["id"] / name
         if not path.is_file():
-            raise HTTPException(404, "Artifact not found")
+            raise HTTPException(404, "Không tìm thấy tệp kết quả")
         return FileResponse(path, media_type=media, filename=f"{job['id']}-{name}")
 
-    @app.get("/v1/jobs/{job_id}/audio", dependencies=[Depends(authorize)])
+    @app.get("/v1/jobs/{job_id}/audio")
     def audio(job_id: str):
         return artifact(job_id, "audio.flac", "audio/flac")
 
-    @app.get("/v1/jobs/{job_id}/score", dependencies=[Depends(authorize)])
+    @app.get("/v1/jobs/{job_id}/score")
     def score(job_id: str):
         return artifact(job_id, "score.abc", "text/plain; charset=utf-8")
 
