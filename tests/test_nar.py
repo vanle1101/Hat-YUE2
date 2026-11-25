@@ -345,6 +345,7 @@ def test_default_query_block_tiles_pre_ampere_cuda(monkeypatch):
 
     fake_q = FakeQ()
     monkeypatch.setattr(torch.cuda, "get_device_capability", lambda *args, **kwargs: (7, 5))
-    assert nar._default_query_block(fake_q, "sdpa") == 256
+    assert nar._default_query_block(fake_q, "sdpa", causal=True) == 256
+    assert nar._default_query_block(fake_q, "sdpa", causal=False) == 512
     monkeypatch.setattr(torch.cuda, "get_device_capability", lambda *args, **kwargs: (8, 0))
-    assert nar._default_query_block(fake_q, "sdpa") == 8192
+    assert nar._default_query_block(fake_q, "sdpa", causal=True) == 8192

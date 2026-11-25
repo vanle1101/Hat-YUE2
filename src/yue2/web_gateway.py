@@ -1,10 +1,13 @@
 """Cổng web công khai cho dịch vụ tạo nhạc YuE2 (không yêu cầu khóa API)."""
+import asyncio
 from contextlib import asynccontextmanager, suppress
 import json
 import os
 from pathlib import Path
 import random
 import re
+import shutil
+import subprocess
 import tempfile
 import time
 import uuid
@@ -82,6 +85,75 @@ def _source_dir():
     return root
 
 
+def _mp3_dir():
+    root = _source_dir() / "mp3_cache"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _prune_mp3_cache(cache_dir: Path, limit: int = 48):
+    files = sorted(cache_dir.glob("*.mp3"), key=lambda p: p.stat().st_mtime)
+    while len(files) > limit:
+        oldest = files.pop(0)
+        with suppress(OSError):
+            oldest.unlink()
+
+
+def _transcode_flac_to_mp3(flac_bytes: bytes, mp3_path: Path) -> bool:
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return False
+    tmp_flac = mp3_path.with_suffix(".flac.tmp")
+    tmp_mp3 = mp3_path.with_suffix(".mp3.tmp")
+    try:
+        tmp_flac.write_bytes(flac_bytes)
+        proc = subprocess.run(
+            [ffmpeg, "-y", "-nostdin", "-v", "error", "-i", str(tmp_flac),
+             "-vn", "-c:a", "libmp3lame", "-q:a", "2", str(tmp_mp3)],
+            capture_output=True, timeout=180,
+        )
+        if proc.returncode != 0 or not tmp_mp3.is_file() or tmp_mp3.stat().st_size == 0:
+            return False
+        tmp_mp3.replace(mp3_path)
+        _prune_mp3_cache(mp3_path.parent)
+        return True
+    finally:
+        with suppress(OSError):
+            tmp_flac.unlink()
+        with suppress(OSError):
+            tmp_mp3.unlink()
+
+
+def _cover_history_path():
+    return _source_dir() / "cover_jobs.json"
+
+
+def _load_cover_history() -> dict:
+    path = _cover_history_path()
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_cover_history(cover_jobs: dict):
+    recent = dict(sorted(
+        cover_jobs.items(),
+        key=lambda kv: kv[1].get("created_at", 0),
+        reverse=True,
+    )[:20])
+    tmp = _cover_history_path().with_suffix(".json.tmp")
+    try:
+        tmp.write_text(json.dumps(recent), encoding="utf-8")
+        tmp.replace(_cover_history_path())
+    except OSError:
+        with suppress(OSError):
+            tmp.unlink()
+
+
 def _prune_sources(sources: dict):
     now = time.time()
     expired = [
@@ -139,10 +211,35 @@ def _json_or_detail(response: httpx.Response) -> dict:
         return {"detail": response.text or response.reason_phrase or f"HTTP {response.status_code}"}
 
 
+AUDIO_URL_RE = re.compile(r"^/v1/jobs/([A-Za-z0-9_-]{1,64})/audio$")
+
+
+def _rewrite_audio_urls(payload: dict) -> dict:
+    if not isinstance(payload, dict):
+        return payload
+
+    def _rewrite_result(res):
+        if isinstance(res, dict):
+            url = res.get("audio_url")
+            if isinstance(url, str):
+                m = AUDIO_URL_RE.match(url)
+                if m:
+                    res["audio_url"] = f"/api/audio/{m.group(1)}.mp3"
+
+    _rewrite_result(payload.get("result"))
+    candidates = payload.get("candidates")
+    if isinstance(candidates, list):
+        for cand in candidates:
+            if isinstance(cand, dict):
+                _rewrite_result(cand.get("result"))
+    return payload
+
+
 def _forward_json_with_quota(response: httpx.Response) -> JSONResponse:
     data = _json_or_detail(response)
     if response.is_success:
         data["remaining"] = UNLIMITED_QUOTA
+        _rewrite_audio_urls(data)
     return JSONResponse(data, status_code=response.status_code)
 
 
@@ -197,7 +294,7 @@ def _format_cover_job(job: dict, meta: dict | None = None) -> dict:
         payload["request"] = meta.get("request", {})
         if meta.get("source"):
             payload["source"] = meta["source"]
-    return payload
+    return _rewrite_audio_urls(payload)
 
 
 def create_app(upstream=None):
@@ -218,7 +315,8 @@ def create_app(upstream=None):
         openapi_url=None, lifespan=lifespan,
     )
     app.state.cover_sources = {}
-    app.state.cover_jobs = {}
+    app.state.cover_jobs = _load_cover_history()
+    app.state.audio_locks = {}
 
     @app.middleware("http")
     async def headers(request, call_next):
@@ -492,6 +590,7 @@ def create_app(upstream=None):
             },
         }
         app.state.cover_jobs[data["id"]] = job_meta
+        _save_cover_history(app.state.cover_jobs)
         return JSONResponse(_format_cover_job(data, job_meta), status_code=response.status_code)
 
     @app.get("/api/cover/jobs/{job_id}")
@@ -506,6 +605,35 @@ def create_app(upstream=None):
         if not response.is_success:
             return JSONResponse(data, status_code=response.status_code)
         return _format_cover_job(data, app.state.cover_jobs.get(job_id))
+
+    @app.get("/api/audio/{job_id}.mp3")
+    async def api_get_audio_mp3(job_id: str):
+        if not SAFE_ID_RE.match(job_id):
+            raise HTTPException(status_code=400, detail="Mã tác vụ không hợp lệ")
+        mp3_path = _mp3_dir() / f"{job_id}.mp3"
+        if mp3_path.is_file():
+            return FileResponse(mp3_path, media_type="audio/mpeg", filename=f"{job_id}.mp3")
+        lock = app.state.audio_locks.setdefault(job_id, asyncio.Lock())
+        async with lock:
+            if mp3_path.is_file():
+                return FileResponse(mp3_path, media_type="audio/mpeg", filename=f"{job_id}.mp3")
+            try:
+                response = await app.state.client.get(
+                    upstream + f"/v1/jobs/{job_id}/audio",
+                    timeout=httpx.Timeout(120.0, connect=3.0),
+                )
+            except httpx.HTTPError as exc:
+                return _upstream_error_response(exc)
+            if not response.is_success:
+                return JSONResponse(_json_or_detail(response), status_code=response.status_code)
+            flac_bytes = response.content
+            if await asyncio.to_thread(_transcode_flac_to_mp3, flac_bytes, mp3_path):
+                return FileResponse(mp3_path, media_type="audio/mpeg", filename=f"{job_id}.mp3")
+            return Response(
+                content=flac_bytes,
+                media_type=response.headers.get("content-type", "audio/flac"),
+                headers={"Content-Disposition": f'attachment; filename="{job_id}.flac"'},
+            )
 
     @app.get("/api/cover/history")
     async def api_cover_history():

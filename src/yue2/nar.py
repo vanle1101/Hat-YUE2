@@ -48,9 +48,13 @@ def song_chunks(prefix, codec, seed, context=CONTEXT):
             for a, b in ranges]
 
 
-def _default_query_block(q, backend):
+def _default_query_block(q, backend, causal=False):
     pre_ampere = q.device.type == "cuda" and torch.cuda.get_device_capability(q.device) < (8, 0)
-    return 256 if (q.device.type != "cuda" or backend == "math" or pre_ampere) else len(q)
+    if q.device.type != "cuda" or backend == "math":
+        return 256
+    if pre_ampere:
+        return 256 if causal else 512
+    return len(q)
 
 
 def attention(q, k, v, *, causal=False, backend="sdpa", query_chunk_size=None):
@@ -72,7 +76,7 @@ def attention(q, k, v, *, causal=False, backend="sdpa", query_chunk_size=None):
     if query_chunk_size is not None and (isinstance(query_chunk_size, bool) or
                                         not isinstance(query_chunk_size, Integral) or query_chunk_size < 1):
         raise ValueError("query_chunk_size must be a positive integer")
-    block = query_chunk_size or _default_query_block(q, backend)
+    block = query_chunk_size or _default_query_block(q, backend, causal=causal)
     query = q.transpose(0, 1).unsqueeze(0)
     key = k.transpose(0, 1).unsqueeze(0)
     value = v.transpose(0, 1).unsqueeze(0)

@@ -203,7 +203,7 @@ def test_api_bridge_routes_text_and_cover_flows(tmp_path, monkeypatch):
         cover_poll = client.get(f"/api/cover/jobs/{cover_job_id}")
         assert cover_poll.status_code == 200
         assert cover_poll.json()["status"] == "completed"
-        assert cover_poll.json()["candidates"][0]["result"]["audio_url"] == "/v1/jobs/c1/audio"
+        assert cover_poll.json()["candidates"][0]["result"]["audio_url"] == "/api/audio/c1.mp3"
 
         history = client.get("/api/cover/history").json()
         assert len(history["items"]) == 1
@@ -215,5 +215,39 @@ def test_api_bridge_routes_text_and_cover_flows(tmp_path, monkeypatch):
         })
         assert single_resp.status_code == 202
         assert json.loads(seen[-1][2])["n"] == 1
+
+        app.state.client = original
+
+
+def test_api_audio_mp3_transcode_and_fallback(tmp_path, monkeypatch):
+    monkeypatch.setenv("YUE2_WEB_SOURCE_DIR", str(tmp_path))
+    app = create_app("http://127.0.0.1:8015")
+    child_id = "c" * 32
+
+    def handler(request):
+        if request.url.path == f"/v1/jobs/{child_id}/audio":
+            return httpx.Response(200, content=b"fLaC-fake", headers={"content-type": "audio/flac"})
+        raise AssertionError(request.url)
+
+    with TestClient(app) as client:
+        original = replace_upstream(app, handler)
+
+        monkeypatch.setattr("yue2.web_gateway.shutil.which", lambda name: None)
+        fb = client.get(f"/api/audio/{child_id}.mp3")
+        assert fb.status_code == 200
+        assert fb.content == b"fLaC-fake"
+        assert fb.headers["content-type"] == "audio/flac"
+
+        def fake_transcode(flac_bytes, mp3_path):
+            assert flac_bytes == b"fLaC-fake"
+            mp3_path.write_bytes(b"ID3-fake-mp3")
+            return True
+
+        monkeypatch.setattr("yue2.web_gateway._transcode_flac_to_mp3", fake_transcode)
+        mp3 = client.get(f"/api/audio/{child_id}.mp3")
+        assert mp3.status_code == 200
+        assert mp3.content == b"ID3-fake-mp3"
+        assert mp3.headers["content-type"] == "audio/mpeg"
+        assert f"{child_id}.mp3" in mp3.headers["content-disposition"]
 
         app.state.client = original
