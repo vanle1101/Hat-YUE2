@@ -4,95 +4,157 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light">
-<title>YuE2 Studio · Tạo nhạc &amp; Cover</title>
+<title>NoMoney Studio · Tạo nhạc &amp; Cover</title>
 <style>
 :root {
-  color-scheme: dark;
+  color-scheme: light;
   font-family: "Segoe UI", system-ui, sans-serif;
-  --page: #111514; --surface: #1b211f; --raised: #222a27; --ink: #f0f5f1;
-  --muted: #a5b4ad; --edge: #394641; --accent: #bdf77a; --accent-ink: #182313;
-  background: var(--page); color: var(--ink);
+  --page: #fff8f9;
+  --surface: #fff;
+  --raised: #f6f6f8;
+  --ink: #17151b;
+  --muted: #56515f;
+  --edge: #e8e5eb;
+  --border-rose: #f7d2da;
+  --soft-rose: #fff0f3;
+  --accent: #bd1939;
+  --accent-ink: #fff;
+  background: var(--page);
+  color: var(--ink);
 }
 * { box-sizing: border-box; }
-body { margin: 0; }
+body {
+  min-height: 100vh; margin: 0;
+  background: radial-gradient(ellipse at 3% 55%, #ffe9ed 0, transparent 35%),
+    radial-gradient(ellipse at 98% 20%, #fff0f3 0, transparent 40%), var(--page);
+}
 button, input, textarea, select { font: inherit; }
 button, summary { cursor: pointer; }
-button:disabled { opacity: .55; cursor: default; }
+button:disabled { opacity: .56; cursor: default; }
 [hidden], .hidden { display: none !important; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 a { color: inherit; }
-h1, h2, p { margin: 0; }
+h1, h2, h3, p { margin: 0; }
 p { line-height: 1.5; }
-header { border-bottom: 1px solid var(--edge); }
-.topbar, main { max-width: 1180px; margin: auto; padding-inline: 26px; }
-.topbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 59px; }
-.brand, header nav { display: flex; align-items: center; gap: 12px; }
-.brand { font-weight: 740; letter-spacing: -.02em; }
-.brand-mark { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 7px; color: var(--accent-ink); background: var(--accent); }
-.nav-link { color: var(--muted); font-size: 13px; text-decoration: none; }
-.nav-link:hover { color: var(--ink); }
-main { padding-block: 32px 48px; }
-.hero { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 20px; }
-h1 { font-size: clamp(1.9rem, 4vw, 2.85rem); letter-spacing: -.052em; }
-h2 { font-size: 16px; }
-.tabs { display: flex; gap: 4px; width: max-content; max-width: 100%; background: var(--surface); border: 1px solid var(--edge); border-radius: 10px; padding: 3px; }
-.tabs button { min-width: 105px; border: 0; background: transparent; color: var(--muted); }
-.tabs [aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
-.card { min-width: 0; border: 1px solid var(--edge); border-radius: 14px; background: var(--surface); padding: 18px; }
-.composer { padding: 0; overflow: hidden; }
-.editor { display: grid; grid-template-columns: minmax(0, 1fr) minmax(235px, .44fr); }
-.editor-fields { padding: 17px; min-width: 0; }
-.field { padding: 13px; border: 1px solid var(--edge); border-radius: 10px; background: var(--page); margin-bottom: 12px; }
-.field:last-child { margin-bottom: 0; }
-.field:focus-within { border-color: #88a67b; }
-.field-head, .righttitle, .composer-actions { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
-.field label { margin: 0; font-size: 14px; }
-.field output { font-size: 11px; color: var(--muted); flex-shrink: 0; }
-.field textarea { border: 0; padding: 9px 0 0; background: transparent; outline: none; }
-textarea::placeholder, input::placeholder { color: #93a49b; }
-#lyrics { min-height: 136px; }
-#style { min-height: 65px; }
-.choice-panel { border-left: 1px solid var(--edge); padding: 20px 16px; background: #181e1c; }
-fieldset { border: 0; margin: 0 0 16px; padding: 0; min-width: 0; }
+.topbar, main { max-width: 1500px; margin-inline: auto; padding-inline: clamp(14px, 3.3vw, 48px); }
+.topbar {
+  min-height: 88px; display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 14px;
+}
+.brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.brand h1 { font-size: clamp(17px, 2.2vw, 25px); line-height: 1.15; letter-spacing: -.035em; }
+.brand p { color: var(--muted); font-size: 13px; margin-top: 3px; }
+.brand-mark, .source-mark, .upload-icon {
+  display: grid; place-items: center; flex-shrink: 0;
+  background: linear-gradient(140deg, #fb5570, #e81b48); color: #fff; font-weight: 760;
+}
+.brand-mark { width: 43px; height: 43px; border-radius: 12px; font-size: 23px; }
+.settings-menu { position: relative; justify-self: end; }
+.settings-menu > summary {
+  list-style: none; display: grid; place-items: center; width: 41px; height: 41px; border: 1px solid transparent;
+  border-radius: 50%; font-size: 23px;
+}
+.settings-menu > summary::-webkit-details-marker { display: none; }
+.settings-menu[open] > summary, .settings-menu > summary:hover { background: var(--surface); border-color: var(--edge); }
+.menu-links {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 2; min-width: 182px; display: grid; gap: 3px;
+  border: 1px solid var(--edge); border-radius: 13px; padding: 6px;
+  background: var(--surface); box-shadow: 0 10px 22px #39132612;
+}
+.menu-links a, .menu-links button {
+  display: block; color: var(--ink); padding: 9px 10px; text-align: left;
+  border: 0; border-radius: 8px; text-decoration: none; background: transparent; font-size: 13px;
+}
+.menu-links a:hover, .menu-links button:hover { background: var(--soft-rose); }
+main { padding-block: 8px 40px; }
+h2 { font-size: 16px; letter-spacing: -.015em; }
+.tabs {
+  display: flex; gap: 3px; width: max-content; max-width: 100%; background: #f6f4f6;
+  border: 1px solid var(--edge); border-radius: 999px; padding: 3px;
+}
+.tabs button { min-width: 100px; border: 1px solid transparent; background: transparent; color: var(--muted); border-radius: 999px; }
+.tabs [aria-pressed="true"] { background: var(--surface); border-color: var(--border-rose); color: var(--accent); box-shadow: 0 1px 3px #3616240c; }
+.card { min-width: 0; border: 1px solid var(--border-rose); border-radius: 22px; background: var(--surface); padding: 18px; }
+.composer { padding: clamp(12px, 1.7vw, 23px); box-shadow: 0 14px 35px #9a25420b; }
+.editor { display: grid; grid-template-columns: minmax(0, 2.08fr) minmax(255px, 1fr); gap: 16px; }
+.editor-fields { min-width: 0; display: grid; align-content: start; gap: 14px; }
+.field, .choice-panel {
+  min-width: 0; padding: 14px 16px; border: 1px solid var(--edge); border-radius: 16px; background: #fff;
+}
+.field:focus-within { border-color: #e98799; }
+.field-head, .righttitle, .composer-actions { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px 14px; }
+.field-title, .choice-panel legend { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.field label, .choice-panel legend { margin: 0; font-size: 16px; font-weight: 730; letter-spacing: -.02em; }
+.field-icon { color: var(--accent); width: 1.1em; text-align: center; display: inline-block; font-size: 19px; line-height: 1; flex-shrink: 0; }
+.field-head .hint { margin-left: 3px; }
+.field textarea { border: 0; border-top: 1px solid var(--edge); border-radius: 0; padding: 10px 2px 3px; margin-top: 9px; background: transparent; outline: none; }
+.field-counter { display: block; text-align: right; color: var(--muted); font-size: 12px; margin-top: 5px; }
+#lyrics { min-height: clamp(144px, 14vw, 220px); }
+#style { min-height: 92px; }
+.choice-panel { padding: 16px; }
+fieldset { border: 0; margin: 0 0 18px; padding: 0; min-width: 0; }
 fieldset:last-child { margin-bottom: 0; }
 legend, label { color: var(--ink); font-size: 13px; font-weight: 650; }
 legend { padding: 0; margin-bottom: 7px; }
-label { display: block; margin: 12px 0 5px; }
+.choice-panel legend { margin-bottom: 9px; }
+label { display: block; margin: 11px 0 5px; }
 .hint { color: var(--muted); font-size: 12px; }
-input, select, textarea { width: 100%; padding: 8px 9px; border: 1px solid var(--edge); border-radius: 7px; background: var(--raised); color: var(--ink); font-size: 14px; }
-textarea { display: block; resize: vertical; line-height: 1.5; }
+input, select, textarea {
+  width: 100%; padding: 8px 10px; border: 1px solid var(--edge); border-radius: 8px;
+  background: var(--surface); color: var(--ink); font-size: 14px;
+}
+textarea { display: block; resize: vertical; line-height: 1.55; }
+textarea::placeholder, input::placeholder { color: #6c6571; }
 textarea.code, pre { font-family: ui-monospace, monospace; font-size: 12px; }
-button { border: 1px solid var(--edge); border-radius: 7px; background: var(--raised); color: var(--ink); padding: 8px 10px; font-size: 13px; font-weight: 650; }
-button:hover:not(:disabled) { border-color: #81978b; }
-button.primary { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); padding: 11px 18px; }
-button.primary:hover:not(:disabled) { background: #d1ff9e; }
-.segmented { display: flex; gap: 4px; padding: 3px; border-radius: 8px; background: var(--page); border: 1px solid var(--edge); }
+button {
+  border: 1px solid var(--edge); border-radius: 9px; background: var(--surface);
+  color: var(--ink); padding: 8px 11px; font-size: 13px; font-weight: 650;
+}
+button:hover:not(:disabled) { border-color: #d78a9a; }
+button.primary {
+  border: 1px solid transparent; background: linear-gradient(115deg, #df2851, #c70e39);
+  color: #fff; padding: 13px 26px; min-width: 182px; min-height: 47px;
+  border-radius: 16px; font-size: 16px; box-shadow: 0 6px 14px #d51d4620;
+}
+button.primary:hover:not(:disabled) { background: linear-gradient(115deg, #d31e48, #b50b33); border-color: transparent; }
+.segmented { display: flex; gap: 3px; padding: 3px; border-radius: 12px; background: var(--raised); }
 .segmented label { flex: 1; min-width: 0; text-align: center; }
 .segmented label, .chips label { position: relative; margin: 0; cursor: pointer; }
-.segmented span { display: block; padding: 6px 3px; border-radius: 5px; font-size: 12px; color: var(--muted); }
+.segmented span { display: block; padding: 7px 4px; border: 1px solid transparent; border-radius: 10px; font-size: 13px; color: var(--muted); }
 .segmented input, .chips input { position: absolute; width: 1px; height: 1px; padding: 0; opacity: 0; }
 .segmented input:focus-visible + span, .chips input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
-.segmented input:checked + span { background: var(--raised); color: var(--accent); }
+.segmented input:checked + span { background: var(--soft-rose); border-color: #f5b8c6; color: var(--accent); }
 .chips, .actions { display: flex; gap: 6px; flex-wrap: wrap; }
-.chips span { display: inline-block; border: 1px solid var(--edge); border-radius: 20px; padding: 5px 9px; color: var(--muted); font-size: 12px; }
-.chips input:checked + span { color: var(--accent); background: #2b3b29; border-color: #78975e; }
+.chips span {
+  display: inline-block; border: 1px solid var(--edge); border-radius: 999px;
+  padding: 5px 11px; color: var(--muted); font-size: 13px; background: #fff;
+}
+.chips input:checked + span { color: var(--accent); background: var(--soft-rose); border-color: #f5b8c6; }
 #referenceHint { margin-top: 7px; }
-.upload { padding: 16px; border-bottom: 1px solid var(--edge); }
-.upload.is-empty { border-bottom: 0; }
-.dropzone { display: grid; justify-items: center; align-content: center; gap: 8px; width: 100%; min-height: 205px; padding: 20px; border: 1px dashed #6f8579; border-radius: 10px; background: var(--page); text-align: center; }
-.dropzone strong { font-size: 18px; }
-.dropzone .upload-icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; background: var(--raised); color: var(--accent); font-size: 20px; }
+.upload { margin-bottom: 16px; padding: 11px 15px; border: 1px solid var(--edge); border-radius: 16px; background: #fff; }
+.upload.is-empty { margin-bottom: 0; padding: 0; border: 0; }
+.dropzone {
+  display: grid; justify-items: center; align-content: center; gap: 8px; width: 100%; min-height: 195px;
+  padding: 20px 10px; border: 1px dashed #e695a8; border-radius: 14px; background: #fffbfc; text-align: center;
+}
+.dropzone strong { font-size: 17px; }
+.upload-icon { width: 36px; height: 36px; border-radius: 10px; font-size: 21px; }
 .dropzone small { color: var(--muted); font-size: 12px; font-weight: 400; }
-.dropzone[data-dragging="true"] { background: #29392c; border-color: var(--accent); }
-.source { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
-.source div:first-child { min-width: 0; }
-.source-name { overflow-wrap: anywhere; font-size: 14px; font-weight: 700; }
+.dropzone[data-dragging="true"] { background: var(--soft-rose); border-color: var(--accent); }
+.source { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.source-info { display: flex; align-items: center; gap: 13px; min-width: 0; }
+.source-mark { width: 52px; height: 52px; border-radius: 13px; font-size: 26px; }
+.source-name { overflow-wrap: anywhere; font-size: clamp(14px, 1.4vw, 17px); font-weight: 730; }
+.source .actions { flex-shrink: 0; align-items: center; }
+.source button { border-radius: 999px; padding-inline: 13px; }
+#playSource { border: 0; background: var(--ink); color: #fff; padding-inline: 11px; }
+#removeAudio { color: var(--accent); border-color: var(--border-rose); }
 audio { width: 100%; height: 36px; margin-top: 10px; }
-.lyric-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 9px 0 0; }
-.lyric-tools select { width: auto; font-size: 12px; }
-#recognize { color: var(--accent); border-color: #586c51; }
-#providerHint { margin: 6px 0 0; }
-.vocal-tools { flex-basis: 100%; margin-top: 2px; }
+.lyric-tools { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 5px; }
+.lyric-tools select { width: auto; padding: 5px 7px; font-size: 12px; }
+#recognize { color: var(--accent); border-color: #f5b8c6; background: var(--soft-rose); border-radius: 999px; }
+#providerHint { margin: 7px 0 0; }
+.vocal-tools { margin-top: 7px; }
 .vocal-tools summary { color: var(--muted); font-size: 12px; }
 .vocal-tools .actions { align-items: center; margin-top: 7px; }
 #vocalName { overflow-wrap: anywhere; }
@@ -100,50 +162,48 @@ audio { width: 100%; height: 36px; margin-top: 10px; }
 #recognitionStatus { margin-top: 7px; }
 #lyricSuggestion { margin-block: 8px; padding: 8px; background: var(--raised); border-radius: 7px; }
 #lyricSuggestion textarea { margin-block: 6px; }
-.composer-actions { border-top: 1px solid var(--edge); flex-wrap: wrap; padding: 12px 16px; }
+.composer-actions { gap: 10px; padding-top: 14px; }
 .composer-actions summary, .options summary { padding-block: 5px; color: var(--muted); font-size: 13px; }
 .composer-actions details[open] .actions { margin-top: 5px; }
-.options { margin-inline: 16px; padding: 9px 0; border-top: 1px solid var(--edge); }
+.options { margin-top: 10px; padding-top: 5px; border-top: 1px solid var(--edge); scroll-margin-top: 10px; }
 .options details { margin-top: 9px; }
 .options button { margin-block: 6px; }
 .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
 aside { display: grid; grid-template-columns: minmax(0, .42fr) minmax(0, 1fr); align-items: start; gap: 14px; margin-top: 16px; }
+aside .card { border-color: var(--edge); border-radius: 16px; }
 .engine { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; margin-bottom: 6px; }
-.dot { width: 7px; height: 7px; border-radius: 50%; background: #a0957e; }
-[data-state="ready"] .dot { background: #bdf77a; }
-[data-state="offline"] .dot { background: #fd998f; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: #96744b; }
+[data-state="ready"] .dot { background: #21864a; }
+[data-state="offline"] .dot { background: var(--accent); }
 .status { background: var(--raised); padding: 8px 10px; border-radius: 7px; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
-.error { background: #392727; color: #ffd0cd; }
-.message { margin: 8px 16px; }
+.error { background: var(--soft-rose); color: var(--accent); }
+.message { margin: 0 0 10px; }
 .lookup { display: flex; margin: 10px 0 7px; gap: 6px; }
 .lookup input { min-width: 0; }
 .lookup button { white-space: nowrap; }
 .job { border-top: 1px solid var(--edge); padding: 8px 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
 .job small { color: var(--muted); display: block; margin-top: 3px; }
 #result { margin-bottom: 15px; scroll-margin-top: 15px; }
-.render-layout { display: grid; grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr); gap: 18px; }
+.render-layout { display: grid; grid-template-columns: minmax(0, 2.05fr) minmax(220px, 1fr); gap: 18px; }
 .render-layout.no-input { grid-template-columns: minmax(0, 1fr); }
 .render-main { min-width: 0; }
 .render-state { display: flex; align-items: center; gap: 8px; min-height: 21px; font-weight: 740; }
-.render-state[data-tone="success"] { color: var(--accent); }
-.render-state[data-tone="error"] { color: #ffd0cd; }
+.render-state[data-tone="success"] { color: #1b7941; }
+.render-state[data-tone="error"], #progress.error { color: var(--accent); }
 .render-state[data-tone="busy"]::before {
   content: ""; width: 12px; height: 12px; flex: 0 0 auto; border-radius: 50%;
-  border: 2px solid var(--edge); border-top-color: var(--accent);
-  animation: render-spin .8s linear infinite;
+  border: 2px solid var(--border-rose); border-top-color: var(--accent); animation: render-spin .8s linear infinite;
 }
 @keyframes render-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) {
-  .render-state[data-tone="busy"]::before { animation: none; }
-}
+@media (prefers-reduced-motion: reduce) { .render-state[data-tone="busy"]::before { animation: none; } }
 #resultTitle { margin: 12px 0 6px; font-size: 20px; }
 .render-copy { max-height: 13rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); }
-.render-lyrics { min-width: 0; border: 1px solid var(--edge); border-radius: 10px; background: var(--page); padding: 14px; }
+.render-lyrics { min-width: 0; border: 1px solid var(--edge); border-radius: 14px; background: #fbfafc; padding: 14px; }
 .render-lyrics h3 { margin: 0 0 9px; font-size: 14px; color: var(--accent); }
-.render-lyrics pre { margin: 0; padding: 0; max-height: 300px; font-family: inherit; line-height: 1.7; }
+.render-lyrics pre { margin: 0; padding: 0; max-height: 300px; font-family: inherit; line-height: 1.7; background: transparent; }
 .render-meter { width: 100%; height: 8px; margin: 12px 0 4px; accent-color: var(--accent); }
 #progress { color: var(--muted); overflow-wrap: anywhere; }
-#progress.error { color: #ffd0cd; background: transparent; }
+#progress.error { background: transparent; }
 #cancel { margin-block: 8px; }
 .render-versions { display: grid; gap: 8px; margin-top: 10px; }
 .render-version { display: flex; align-items: center; flex-wrap: wrap; gap: 7px 10px; border: 1px solid var(--edge); border-radius: 9px; padding: 8px 10px; }
@@ -151,22 +211,20 @@ aside { display: grid; grid-template-columns: minmax(0, .42fr) minmax(0, 1fr); a
 .render-version audio { width: auto; flex: 1 1 190px; min-width: 150px; margin: 0; }
 .render-version a { white-space: nowrap; color: var(--accent); font-size: 12px; }
 #result summary { padding-top: 8px; font-size: 13px; }
-@media (max-width: 720px) {
-  .render-layout { grid-template-columns: minmax(0, 1fr); }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow: auto; background: var(--raised); padding: 10px; border-radius: 7px; }
+#score { min-height: 120px; margin-block: 6px; }
+@media (max-width: 780px) {
+  .editor, aside, .render-layout { grid-template-columns: minmax(0, 1fr); }
   .render-lyrics pre { max-height: 12rem; }
 }
-pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow: auto; background: var(--page); padding: 10px; border-radius: 7px; }
-#score { min-height: 120px; margin-block: 6px; }
-@media (max-width: 720px) {
-  .editor, aside { grid-template-columns: minmax(0, 1fr); }
-  .choice-panel { border-left: 0; border-top: 1px solid var(--edge); }
-}
-@media (max-width: 480px) {
-  .topbar, main { padding-inline: 12px; }
-  main { padding-top: 18px; }
-  .hero { align-items: start; flex-direction: column; gap: 8px; margin-bottom: 13px; }
-  .upload, .editor-fields, .choice-panel { padding: 11px; }
+@media (max-width: 650px) {
+  .topbar { grid-template-columns: minmax(0, 1fr) auto; gap: 10px; padding-block: 12px; }
+  .tabs { grid-row: 2; grid-column: 1 / -1; justify-self: center; }
+  .settings-menu { grid-row: 1; grid-column: 2; }
+  .field, .choice-panel, .upload { padding: 11px; }
   .source { flex-wrap: wrap; }
+  .source .actions { margin-left: auto; }
+  .lyric-tools { justify-content: flex-start; }
   .composer-actions .primary { width: 100%; }
   .grid { grid-template-columns: minmax(0, 1fr); }
 }
@@ -175,22 +233,25 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflo
 <body>
 <header>
   <div class="topbar">
-    <div class="brand"><span class="brand-mark" aria-hidden="true">♫</span> YuE2 Studio</div>
-    <nav aria-label="Điều hướng">
-      <a class="nav-link" href="#historyCard">Lịch sử</a>
-      <a class="nav-link" href="https://github.com/vanle1101/Hat-YUE2">GitHub</a>
-    </nav>
-  </div>
-</header>
-<main>
-  <section class="hero" aria-labelledby="pageTitle">
-    <h1 id="pageTitle">Phòng thu</h1>
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">♫</span>
+      <div><h1>NoMoney Studio</h1><p>Tạo nhạc và cover bằng AI</p></div>
+    </div>
     <div class="tabs" role="group" aria-label="Chế độ tạo nhạc">
       <button type="button" id="songMode" aria-pressed="true">Tạo bài hát</button>
       <button type="button" id="coverMode" aria-pressed="false">Cover</button>
     </div>
-  </section>
-
+    <details class="settings-menu" id="settingsMenu">
+      <summary aria-label="Cài đặt và điều hướng" title="Cài đặt và điều hướng">⚙</summary>
+      <nav class="menu-links" aria-label="Điều hướng">
+        <button type="button" id="openSettings">Cài đặt nâng cao</button>
+        <a href="#historyCard">Lịch sử tác vụ</a>
+        <a href="https://github.com/vanle1101/Hat-YUE2">GitHub</a>
+      </nav>
+    </details>
+  </div>
+</header>
+<main>
   <div class="workspace">
     <div>
       <section class="card hidden" id="result" aria-labelledby="resultTitle">
@@ -227,7 +288,7 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflo
               <small>MP3, WAV, FLAC, M4A, OGG, AAC, WebM · dưới 40 MiB</small>
             </button>
             <div class="source" id="sourceSummary" hidden>
-              <div><p class="hint">Bản thu gốc</p><p class="source-name" id="sourceName"></p><p class="hint" id="sourceSize"></p></div>
+              <div class="source-info"><span class="source-mark" aria-hidden="true">♫</span><div><p class="hint">Bản thu gốc</p><p class="source-name" id="sourceName"></p><p class="hint" id="sourceSize"></p></div></div>
               <div class="actions">
                 <button type="button" id="playSource" aria-controls="sourcePlayer" aria-expanded="false">Nghe bản gốc</button>
                 <button type="button" id="replaceAudio">Đổi tệp</button>
@@ -241,20 +302,26 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflo
         <div class="editor" id="editor">
           <div class="editor-fields" id="editorFields">
             <div class="field" id="descriptionField">
-              <div class="field-head"><label for="style" id="descriptionLabel">Mô tả bài hát</label><output id="styleCount" for="style"></output></div>
-              <p id="coverDescriptionHint" class="hint" hidden>Ghi cách phối bạn muốn: nhạc cụ, nhịp hoặc màu giọng.</p>
+              <div class="field-head">
+                <div class="field-title"><span class="field-icon" aria-hidden="true">✎</span><label for="style" id="descriptionLabel">Mô tả bài hát</label><p id="coverDescriptionHint" class="hint" hidden>Nhạc cụ, nhịp hoặc màu giọng</p></div>
+              </div>
               <textarea id="style" rows="3" maxlength="2000" placeholder="Ví dụ: Piano nhẹ, nhịp chậm, không khí hoài niệm"></textarea>
+              <output class="field-counter" id="styleCount" for="style"></output>
             </div>
             <div class="field" id="lyricsField">
-              <div class="field-head"><label for="lyrics">Lời bài hát</label><output id="lyricsCount" for="lyrics"></output></div>
-              <div class="lyric-tools" id="lyricTools" hidden>
-                <select id="lyricLanguage" aria-label="Ngôn ngữ nhận diện">
-                  <option value="vi">Tiếng Việt</option><option value="en">Tiếng Anh</option><option value="auto">Tự phát hiện</option>
-                </select>
-                <select id="lyricProvider" aria-label="Nơi nhận diện lời" hidden>
-                  <option value="local">Trên máy</option><option value="api">API</option>
-                </select>
-                <button id="recognize">Nhận diện lời</button>
+              <div class="field-head">
+                <div class="field-title"><span class="field-icon" aria-hidden="true">≡</span><label for="lyrics">Lời bài hát</label></div>
+                <div class="lyric-tools" id="lyricTools" hidden>
+                  <select id="lyricLanguage" aria-label="Ngôn ngữ nhận diện">
+                    <option value="vi">Tiếng Việt</option><option value="en">Tiếng Anh</option><option value="auto">Tự phát hiện</option>
+                  </select>
+                  <select id="lyricProvider" aria-label="Nơi nhận diện lời" hidden>
+                    <option value="local">Trên máy</option><option value="api">API</option>
+                  </select>
+                  <button id="recognize">Nhận diện lời</button>
+                </div>
+              </div>
+              <div id="vocalOptions" hidden>
                 <details id="vocalTools" class="vocal-tools">
                   <summary>Dùng vocal đã tách</summary>
                   <p class="hint">File này chỉ dùng để nhận diện lời. Giai điệu vẫn lấy từ bản gốc.</p>
@@ -274,12 +341,13 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflo
                 <button id="applyLyrics">Dùng lời nhận diện</button>
               </div>
               <textarea id="lyrics" rows="6" maxlength="16000" placeholder="[Verse]&#10;Nhập lời đoạn đầu…&#10;&#10;[Chorus]&#10;Nhập lời điệp khúc…"></textarea>
+              <output class="field-counter" id="lyricsCount" for="lyrics"></output>
             </div>
           </div>
 
           <section class="choice-panel" aria-label="Chọn giọng và phong cách">
             <fieldset>
-              <legend>Giọng hát</legend>
+              <legend><span class="field-icon" aria-hidden="true">♩</span>Giọng hát</legend>
               <div class="segmented">
                 <label><input type="radio" name="voice" value="" checked><span>Tự chọn</span></label>
                 <label><input type="radio" name="voice" value="female vocal"><span>Nữ</span></label>
@@ -287,7 +355,7 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflo
               </div>
             </fieldset>
             <fieldset>
-              <legend>Thể loại · có thể chọn nhiều</legend>
+              <legend><span class="field-icon" aria-hidden="true">♫</span>Thể loại</legend>
               <div class="chips">
                 <label><input type="checkbox" name="genre" value="pop"><span>Pop</span></label>
                 <label><input type="checkbox" name="genre" value="ballad"><span>Ballad</span></label>
@@ -303,10 +371,10 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflo
               <input id="customStyle" maxlength="300" placeholder="Ví dụ: lo-fi, nhạc Trịnh">
             </fieldset>
             <fieldset id="referenceOptions" hidden>
-              <legend>Giai điệu tham chiếu</legend>
+              <legend><span class="field-icon" aria-hidden="true">≋</span>Giai điệu tham chiếu</legend>
               <div class="segmented">
-                <label><input type="radio" name="reference" value="free" checked><span>Phối tự do</span></label>
                 <label><input type="radio" name="reference" value="close"><span>Bám bản gốc</span></label>
+                <label><input type="radio" name="reference" value="free" checked><span>Phối tự do</span></label>
               </div>
               <p class="hint" id="referenceHint">Lấy giai điệu và để YuE2 phối khí.</p>
             </fieldset>
@@ -454,6 +522,7 @@ function setMode(next) {
   $('composerActions').hidden = isCover && !sourceFile;
   $('settings').hidden = isCover && !sourceFile;
   $('lyricTools').hidden = !isCover;
+  $('vocalOptions').hidden = !isCover;
   updateProviderHint();
   $('recognitionStatus').hidden = !isCover;
   $('lyricSuggestion').hidden = !isCover || !$('recognizedText').value;
@@ -794,6 +863,16 @@ async function health() {
   setTimeout(health, 10000);
 }
 
+$('openSettings').onclick = () => {
+  $('settingsMenu').open = false;
+  $('settings').hidden = false;
+  $('settings').open = true;
+  $('settings').scrollIntoView({block: 'start'});
+  $('settings').querySelector('summary').focus({preventScroll: true});
+};
+for (const link of $('settingsMenu').querySelectorAll('a')) {
+  link.onclick = () => { $('settingsMenu').open = false; };
+}
 $('songMode').onclick = () => setMode('song');
 $('coverMode').onclick = () => setMode('cover');
 for (const id of ['style', 'lyrics']) $(id).addEventListener('input', updateCounts);
