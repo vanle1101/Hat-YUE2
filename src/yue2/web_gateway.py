@@ -1,10 +1,16 @@
 """Cổng web công khai cho dịch vụ tạo nhạc YuE2 (không yêu cầu khóa API)."""
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
+import json
 import os
 from pathlib import Path
+import random
+import re
+import tempfile
+import time
+import uuid
 
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from starlette.background import BackgroundTask
 
@@ -18,6 +24,43 @@ FORWARDED_RESPONSE_HEADERS = {
 }
 JSON_BODY_LIMIT = 256 * 1024
 COVER_BODY_LIMIT = 40 * 1024 * 1024
+UNLIMITED_QUOTA = 999999
+MAX_CACHED_SOURCES = 32
+SOURCE_RETENTION_SECONDS = 6 * 3600
+
+STUDIO_DIR = Path(__file__).with_name("studio")
+STUDIO_ASSETS = {
+    "styles.css": "text/css; charset=utf-8",
+    "analytics.js": "application/javascript; charset=utf-8",
+    "quota.js": "application/javascript; charset=utf-8",
+    "app.js": "application/javascript; charset=utf-8",
+    "cover.js": "application/javascript; charset=utf-8",
+    "showcase-data.js": "application/javascript; charset=utf-8",
+    "showcase.js": "application/javascript; charset=utf-8",
+    "favicon.svg": "image/svg+xml",
+    "nomoney-logo.svg": "image/svg+xml",
+    "brand-logo.png": "image/png",
+}
+AUDIO_EXT_MIME = {
+    "mp3": "audio/mpeg",
+    "wav": "audio/wav",
+    "flac": "audio/flac",
+    "m4a": "audio/mp4",
+    "aac": "audio/aac",
+    "ogg": "audio/ogg",
+}
+SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+STAGE_TO_COVER = {
+    "queued": "score_pending",
+    "claimed_waiting": "score_pending",
+    "transcribing": "transcribing_score",
+    "planning": "submitting_generation",
+    "semantic": "generating",
+    "synthesis": "generating",
+    "decode": "generating",
+    "saving": "generating",
+    "finished": "done",
+}
 
 
 def _default_runtime():
@@ -28,6 +71,133 @@ def _default_runtime():
         "nar_batch_size": int(os.environ.get("YUE2_NAR_BATCH_SIZE", "2")),
         "ar_nar_overlap": os.environ.get("YUE2_AR_NAR_OVERLAP", "true").lower() == "true",
     }
+
+
+def _source_dir():
+    root = Path(os.environ.get(
+        "YUE2_WEB_SOURCE_DIR",
+        str(Path(tempfile.gettempdir()) / "yue2_web_sources"),
+    ))
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _prune_sources(sources: dict):
+    now = time.time()
+    expired = [
+        sid for sid, meta in sources.items()
+        if (now - meta["created_at"]) > SOURCE_RETENTION_SECONDS
+    ]
+    for sid in expired:
+        meta = sources.pop(sid, None)
+        if meta:
+            with suppress(OSError):
+                meta["path"].unlink()
+    while len(sources) > MAX_CACHED_SOURCES:
+        oldest_sid = min(sources, key=lambda k: sources[k]["created_at"])
+        meta = sources.pop(oldest_sid, None)
+        if meta:
+            with suppress(OSError):
+                meta["path"].unlink()
+
+
+async def _read_bounded_body(request: Request, limit: int, limit_message: str) -> bytes:
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > limit:
+            raise HTTPException(status_code=413, detail=limit_message)
+    return bytes(body)
+
+
+async def _read_json_body(request: Request) -> dict:
+    raw = await _read_bounded_body(request, JSON_BODY_LIMIT, "Dữ liệu yêu cầu vượt quá 256 KiB")
+    try:
+        data = json.loads(raw)
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise HTTPException(status_code=400, detail="JSON không hợp lệ") from exc
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="Dữ liệu phải là JSON object")
+    return data
+
+
+def _upstream_error_response(exc: httpx.HTTPError) -> JSONResponse:
+    return JSONResponse(
+        {"detail": "Dịch vụ suy luận tạm thời không khả dụng, vui lòng thử lại sau"},
+        status_code=503,
+        headers={"Retry-After": "10"},
+    )
+
+
+def _json_or_detail(response: httpx.Response) -> dict:
+    try:
+        data = response.json()
+        if isinstance(data, dict):
+            return data
+        return {"detail": str(data)}
+    except ValueError:
+        return {"detail": response.text or response.reason_phrase or f"HTTP {response.status_code}"}
+
+
+def _forward_json_with_quota(response: httpx.Response) -> JSONResponse:
+    data = _json_or_detail(response)
+    if response.is_success:
+        data["remaining"] = UNLIMITED_QUOTA
+    return JSONResponse(data, status_code=response.status_code)
+
+
+def _extract_cover_stage(job: dict) -> str:
+    candidates = job.get("candidates")
+    if isinstance(candidates, list) and candidates:
+        for cand in candidates:
+            if cand.get("status") == "running":
+                return STAGE_TO_COVER.get(cand.get("stage", ""), "generating")
+        return STAGE_TO_COVER.get(candidates[0].get("stage", ""), "score_pending")
+    return STAGE_TO_COVER.get(job.get("stage", ""), "score_pending")
+
+
+def _format_cover_job(job: dict, meta: dict | None = None) -> dict:
+    status = job.get("status", "queued")
+    raw_candidates = job.get("candidates") if isinstance(job.get("candidates"), list) else [job]
+    ready_candidates = [
+        cand for cand in raw_candidates
+        if (cand.get("result") or {}).get("audio_url")
+    ]
+    if status in {"succeeded", "truncated"} or (status == "partial_failed" and ready_candidates):
+        cover_status = "completed"
+        stage = "done"
+        error = None
+    elif status in {"failed", "cancelled"} or (status == "partial_failed" and not ready_candidates):
+        cover_status = "failed"
+        stage = "done"
+        err = job.get("error") or next(
+            (cand.get("error") for cand in raw_candidates if cand.get("error")),
+            None,
+        ) or {}
+        error = {
+            "code": err.get("code", "cover_failed"),
+            "message": err.get("message") or "Tạo bản cover thất bại, vui lòng thử lại.",
+        }
+    else:
+        cover_status = status
+        stage = _extract_cover_stage(job)
+        error = None
+
+    payload = {
+        "id": job["id"],
+        "created_at": job.get("created_at") or (meta or {}).get("created_at") or time.time(),
+        "status": cover_status,
+        "stage": stage,
+        "remaining": UNLIMITED_QUOTA,
+        "candidates": ready_candidates if cover_status == "completed" else raw_candidates,
+    }
+    if error:
+        payload["error"] = error
+    if meta:
+        payload["request"] = meta.get("request", {})
+        if meta.get("source"):
+            payload["source"] = meta["source"]
+    return payload
 
 
 def create_app(upstream=None):
@@ -47,6 +217,8 @@ def create_app(upstream=None):
         title="YuE2 Studio gateway", docs_url=None, redoc_url=None,
         openapi_url=None, lifespan=lifespan,
     )
+    app.state.cover_sources = {}
+    app.state.cover_jobs = {}
 
     @app.middleware("http")
     async def headers(request, call_next):
@@ -61,14 +233,18 @@ def create_app(upstream=None):
         response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; script-src 'self' 'unsafe-inline'; "
-            "style-src 'self' 'unsafe-inline'; media-src 'self' blob:; "
-            "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; "
+            "style-src 'self' 'unsafe-inline'; media-src 'self' blob: https://storage.googleapis.com; "
+            "img-src 'self' data: https://storage.googleapis.com; "
+            "connect-src 'self' https://storage.googleapis.com; frame-ancestors 'none'; "
             "base-uri 'none'; form-action 'self'"
         )
         return response
 
     @app.get("/")
     async def page():
+        studio_index = STUDIO_DIR / "index.html"
+        if studio_index.is_file():
+            return FileResponse(studio_index, media_type="text/html")
         return FileResponse(
             Path(__file__).with_name("studio.html"), media_type="text/html")
 
@@ -132,8 +308,227 @@ def create_app(upstream=None):
             headers={"Retry-After": "10"},
         )
 
+    @app.get("/api/quota")
+    async def api_quota():
+        return {"remaining": UNLIMITED_QUOTA}
+
+    @app.post("/api/analytics/events")
+    async def api_analytics_events():
+        return {"ok": True}
+
+    @app.post("/api/jobs")
+    async def api_create_job(request: Request):
+        body = await _read_json_body(request)
+        instrumental = bool(body.get("instrumental"))
+        style = str(body.get("style") or "").strip()
+        lyrics = str(body.get("lyrics") or "").strip()
+        if instrumental and not lyrics:
+            lyrics = "[Instrumental]\n"
+            if "instrumental" not in style.lower():
+                style = f"{style}, instrumental" if style else "instrumental"
+        n = 1 if body.get("n") == 1 else 2
+        cot = body.get("cot") if body.get("cot") in {"full", "melody", "off"} else "full"
+        raw_seed = body.get("seed")
+        seed = raw_seed if isinstance(raw_seed, int) and not isinstance(raw_seed, bool) and raw_seed >= 0 else random.randint(1, 2_147_483_647)
+
+        payload = {"n": n, "style": style, "lyrics": lyrics, "cot": cot, "seed": seed}
+        if isinstance(body.get("abc"), str) and body["abc"].strip():
+            payload["abc"] = body["abc"]
+        if isinstance(body.get("cfg_scale"), (int, float)) and not isinstance(body.get("cfg_scale"), bool):
+            payload["cfg_scale"] = body["cfg_scale"]
+
+        headers = {}
+        if "idempotency-key" in request.headers:
+            headers["idempotency-key"] = request.headers["idempotency-key"]
+
+        try:
+            response = await app.state.client.post(
+                upstream + "/v1/jobs", json=payload, headers=headers,
+            )
+        except httpx.HTTPError as exc:
+            return _upstream_error_response(exc)
+
+        return _forward_json_with_quota(response)
+
+    @app.get("/api/jobs/{job_id}")
+    async def api_get_job(job_id: str):
+        if not SAFE_ID_RE.match(job_id):
+            raise HTTPException(status_code=400, detail="Mã tác vụ không hợp lệ")
+        try:
+            response = await app.state.client.get(upstream + f"/v1/jobs/{job_id}")
+        except httpx.HTTPError as exc:
+            return _upstream_error_response(exc)
+        return _forward_json_with_quota(response)
+
+    @app.post("/api/cover/sources")
+    async def api_upload_cover_source(request: Request):
+        ext = (request.headers.get("x-audio-extension") or "wav").strip().lower()
+        if ext not in AUDIO_EXT_MIME:
+            raise HTTPException(status_code=400, detail="Định dạng âm thanh không được hỗ trợ")
+        raw = await _read_bounded_body(request, COVER_BODY_LIMIT, "Dữ liệu yêu cầu vượt quá 40 MiB")
+        if not raw:
+            raise HTTPException(status_code=400, detail="Tệp âm thanh trống")
+        _prune_sources(app.state.cover_sources)
+        source_id = uuid.uuid4().hex
+        filename = f"{source_id}.{ext}"
+        path = _source_dir() / filename
+        path.write_bytes(raw)
+        app.state.cover_sources[source_id] = {
+            "path": path,
+            "filename": filename,
+            "mime_type": request.headers.get("content-type") or AUDIO_EXT_MIME[ext],
+            "size_bytes": len(raw),
+            "created_at": time.time(),
+        }
+        return {"source_id": source_id}
+
+    @app.get("/api/cover/sources/{source_id}/audio")
+    async def api_get_cover_source_audio(source_id: str):
+        if not SAFE_ID_RE.match(source_id):
+            raise HTTPException(status_code=400, detail="Mã tệp không hợp lệ")
+        meta = app.state.cover_sources.get(source_id)
+        if not meta or not meta["path"].is_file():
+            raise HTTPException(status_code=404, detail="Không tìm thấy tệp âm thanh gốc")
+        return FileResponse(meta["path"], media_type=meta["mime_type"], filename=meta["filename"])
+
+    @app.post("/api/cover/recognize-lyrics")
+    async def api_recognize_lyrics(request: Request):
+        body = await _read_json_body(request)
+        source_id = str(body.get("source_id") or "")
+        meta = app.state.cover_sources.get(source_id)
+        if not meta or not meta["path"].is_file():
+            raise HTTPException(status_code=404, detail="Không tìm thấy tệp âm thanh gốc")
+        language = body.get("language") if body.get("language") in {"vi", "en", "auto"} else "auto"
+
+        provider = "local"
+        try:
+            prov_resp = await app.state.client.get(upstream + "/v1/lyrics/providers")
+            if prov_resp.status_code == 200 and prov_resp.json().get("api_host"):
+                provider = "api"
+        except Exception:
+            pass
+
+        audio_bytes = meta["path"].read_bytes()
+        try:
+            response = await app.state.client.post(
+                upstream + "/v1/lyrics",
+                files={"audio": (meta["filename"], audio_bytes, meta["mime_type"])},
+                data={"language": language, "provider": provider},
+                timeout=httpx.Timeout(900.0, connect=3.0),
+            )
+        except httpx.HTTPError as exc:
+            return _upstream_error_response(exc)
+
+        data = _json_or_detail(response)
+        if not response.is_success:
+            return JSONResponse(data, status_code=response.status_code)
+        lyrics_text = str(data.get("lyrics") or "").strip()
+        return {
+            "has_vocals": bool(lyrics_text),
+            "lyrics": lyrics_text,
+            "structure": data.get("structure"),
+            "remaining": UNLIMITED_QUOTA,
+        }
+
+    @app.post("/api/cover/jobs")
+    async def api_create_cover_job(request: Request):
+        body = await _read_json_body(request)
+        source_id = str(body.get("source_id") or "")
+        meta = app.state.cover_sources.get(source_id)
+        if not meta or not meta["path"].is_file():
+            raise HTTPException(status_code=404, detail="Không tìm thấy tệp âm thanh gốc")
+
+        lyrics = str(body.get("lyrics") or "").strip()
+        description = str(body.get("music_description") or "").strip()
+        style = str(body.get("style") or "").strip()
+        vocal_gender = str(body.get("vocal_gender") or "auto")
+        voice_tag = {"female": "female lead vocal", "male": "male lead vocal"}.get(vocal_gender, "")
+        combined_style = ", ".join(part for part in (description, style, voice_tag) if part)
+        reference = "close" if body.get("melody_adherence") == "high" else "free"
+        seed = random.randint(1, 2_147_483_647)
+
+        headers = {}
+        if "idempotency-key" in request.headers:
+            headers["idempotency-key"] = request.headers["idempotency-key"]
+
+        audio_bytes = meta["path"].read_bytes()
+        try:
+            response = await app.state.client.post(
+                upstream + "/v1/covers",
+                files={"audio": (meta["filename"], audio_bytes, meta["mime_type"])},
+                data={
+                    "style": combined_style or "pop",
+                    "lyrics": lyrics,
+                    "reference": reference,
+                    "n": "2",
+                    "seed": str(seed),
+                },
+                headers=headers,
+            )
+        except httpx.HTTPError as exc:
+            return _upstream_error_response(exc)
+
+        data = _json_or_detail(response)
+        if not response.is_success:
+            return JSONResponse(data, status_code=response.status_code)
+
+        job_meta = {
+            "created_at": data.get("created_at") or time.time(),
+            "request": {
+                "source_id": source_id,
+                "lyrics": lyrics,
+                "music_description": description,
+                "style": style,
+                "melody_adherence": body.get("melody_adherence") or "high",
+                "vocal_gender": vocal_gender,
+            },
+            "source": {
+                "source_id": source_id,
+                "audio_url": f"/api/cover/sources/{source_id}/audio",
+                "filename": meta["filename"],
+                "mime_type": meta["mime_type"],
+                "size_bytes": meta["size_bytes"],
+            },
+        }
+        app.state.cover_jobs[data["id"]] = job_meta
+        return JSONResponse(_format_cover_job(data, job_meta), status_code=response.status_code)
+
+    @app.get("/api/cover/jobs/{job_id}")
+    async def api_get_cover_job(job_id: str):
+        if not SAFE_ID_RE.match(job_id):
+            raise HTTPException(status_code=400, detail="Mã tác vụ không hợp lệ")
+        try:
+            response = await app.state.client.get(upstream + f"/v1/jobs/{job_id}")
+        except httpx.HTTPError as exc:
+            return _upstream_error_response(exc)
+        data = _json_or_detail(response)
+        if not response.is_success:
+            return JSONResponse(data, status_code=response.status_code)
+        return _format_cover_job(data, app.state.cover_jobs.get(job_id))
+
+    @app.get("/api/cover/history")
+    async def api_cover_history():
+        items = []
+        recent = sorted(
+            app.state.cover_jobs.items(),
+            key=lambda kv: kv[1]["created_at"],
+            reverse=True,
+        )[:20]
+        for job_id, meta in recent:
+            try:
+                response = await app.state.client.get(upstream + f"/v1/jobs/{job_id}")
+                if response.is_success:
+                    items.append(_format_cover_job(response.json(), meta))
+            except httpx.HTTPError:
+                break
+        return {"items": items}
+
     @app.api_route("/{path:path}", methods=["GET", "POST"])
     async def proxy(path: str, request: Request):
+        if request.method == "GET" and path in STUDIO_ASSETS:
+            asset = STUDIO_DIR / path
+            if asset.is_file():
+                return FileResponse(asset, media_type=STUDIO_ASSETS[path])
         if not (path.startswith("v1/") or path in {
                 "health/live", "health/ready"}):
             return JSONResponse({"detail": "Không tìm thấy đường dẫn"}, 404)
@@ -167,12 +562,8 @@ def create_app(upstream=None):
             if path == "v1/lyrics" and request.method == "POST":
                 outgoing.extensions["timeout"]["read"] = 900.0
             response = await app.state.client.send(outgoing, stream=True)
-        except httpx.HTTPError:
-            return JSONResponse(
-                {"detail": "Dịch vụ suy luận tạm thời không khả dụng, vui lòng thử lại sau"},
-                503,
-                headers={"Retry-After": "10"},
-            )
+        except httpx.HTTPError as exc:
+            return _upstream_error_response(exc)
         selected = {
             key: value for key, value in response.headers.items()
             if key in FORWARDED_RESPONSE_HEADERS
@@ -198,11 +589,7 @@ def main():
 
     uvicorn.run(
         create_app(),
-        host=os.environ.get("YUE2_WEB_HOST", "0.0.0.0"),
+        host=os.environ.get("YUE2_WEB_HOST", "127.0.0.1"),
         port=int(os.environ.get("YUE2_WEB_PORT", "8016")),
-        access_log=False,
+        workers=1,
     )
-
-
-if __name__ == "__main__":
-    main()

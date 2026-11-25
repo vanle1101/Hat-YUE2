@@ -45,7 +45,7 @@ yue2-benchmark = "yue2.benchmark:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-yue2 = ["studio.html"]
+yue2 = ["studio.html", "studio/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
