@@ -75,15 +75,19 @@ def decode_audio(source, directory):
 
 
 def encode_mp3(source, directory):
-    wav_path = decode_wav(source, directory)
+    decode_wav(source, directory)
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise LyricsUnavailable("Cần FFmpeg trong PATH để nhận diện lời bài hát.")
-    mp3_path = directory / "mono.mp3"
+    raw_input = directory / "source.audio"
+    mp3_path = directory / "audio.mp3"
     try:
         subprocess.run(
-            [ffmpeg, "-y", "-nostdin", "-v", "error", "-i", str(wav_path),
-             "-vn", "-c:a", "libmp3lame", "-b:a", "64k", "-f", "mp3", str(mp3_path)],
+            [ffmpeg, "-y", "-nostdin", "-v", "error", "-protocol_whitelist", "file",
+             "-format_whitelist", "mp3,wav,flac,mov,ogg,aac,matroska,webm",
+             "-i", str(raw_input), "-map", "0:a:0", "-t", str(MAX_AUDIO_SECONDS),
+             "-vn", "-ac", "1", "-ar", "44100", "-c:a", "libmp3lame", "-b:a", "96k",
+             "-f", "mp3", str(mp3_path)],
             check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=90,
         )
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
@@ -91,6 +95,16 @@ def encode_mp3(source, directory):
     if not mp3_path.is_file() or mp3_path.stat().st_size == 0:
         raise ValueError("Không tạo được tệp MP3 hợp lệ.")
     return mp3_path
+
+
+WHISPER_HALLUCINATION_RE = re.compile(
+    r"(?:ghiền\s*mì\s*gõ|la\s*la\s*school|subscribe\s+cho\s+kênh|"
+    r"không\s+bỏ\s+lỡ\s+những\s+video\s+hấp\s+dẫn|"
+    r"hẹn\s+gặp\s+lại\s+các\s+bạn\s+trong\s+những\s+video\s+tiếp\s+theo|"
+    r"cảm\s+ơn\s+các\s+bạn\s+đã\s+theo\s+dõi|"
+    r"thanks\s+for\s+watching|please\s+subscribe)",
+    re.I,
+)
 
 
 def _validate_https_base_url(base_url: str, env_name: str):
@@ -282,7 +296,10 @@ class LyricsRecognizer:
             no_speech_threshold=0.55,
             compression_ratio_threshold=2.2,
         )
-        lines = [segment.text.strip() for segment in segments if segment.text.strip()]
+        lines = [
+            segment.text.strip() for segment in segments
+            if segment.text.strip() and not WHISPER_HALLUCINATION_RE.search(segment.text)
+        ]
         return lines, info.language
 
     def transcribe(self, source, language):

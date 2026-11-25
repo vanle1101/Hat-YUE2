@@ -316,7 +316,12 @@ def test_lyrics_recognizer_cuda_error_falls_back_to_cpu(tmp_path, monkeypatch):
 
     class GoodCpuModel:
         def transcribe(self, samples, **options):
-            return iter([SimpleNamespace(text="Cuộc sống đâu lường")]), SimpleNamespace(language="vi")
+            return iter([
+                SimpleNamespace(text="Hãy subscribe cho kênh Ghiền Mì Gõ"),
+                SimpleNamespace(text="Để không bỏ lỡ những video hấp dẫn"),
+                SimpleNamespace(text="Cuộc sống đâu lường"),
+                SimpleNamespace(text="Hẹn gặp lại các bạn trong những video tiếp theo."),
+            ]), SimpleNamespace(language="vi")
 
     recognizer = LyricsRecognizer("small", local_files_only=True, work_dir=tmp_path, device="auto", unload_after=True)
     loads = []

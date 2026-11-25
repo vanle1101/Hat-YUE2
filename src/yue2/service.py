@@ -106,7 +106,7 @@ class Settings(BaseModel):
     lyrics_api_key: SecretStr | None = Field(default=None, repr=False)
     gemini_api_base_url: str = DEFAULT_GEMINI_BASE_URL
     gemini_api_model: str = "gemini-3-flash-preview"
-    gemini_audio_direct: bool = False
+    gemini_audio_direct: bool = True
     gemini_api_key: SecretStr | None = Field(default=None, repr=False)
     sheetsage: str = "m-a-p/SheetSage2"
     sheetsage_revision: str | None = None
