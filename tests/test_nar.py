@@ -337,7 +337,13 @@ def test_offload_restores_modules_when_generation_raises(monkeypatch):
 
 
 def test_default_query_block_tiles_pre_ampere_cuda(monkeypatch):
-    fake_q = SimpleNamespace(device=SimpleNamespace(type="cuda"), __len__=lambda self: 8192)
+    class FakeQ:
+        device = SimpleNamespace(type="cuda")
+
+        def __len__(self):
+            return 8192
+
+    fake_q = FakeQ()
     monkeypatch.setattr(torch.cuda, "get_device_capability", lambda *args, **kwargs: (7, 5))
     assert nar._default_query_block(fake_q, "sdpa") == 256
     monkeypatch.setattr(torch.cuda, "get_device_capability", lambda *args, **kwargs: (8, 0))
