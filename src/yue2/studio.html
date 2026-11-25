@@ -184,6 +184,7 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflo
           <div class="editor-fields" id="editorFields">
             <div class="field" id="descriptionField">
               <div class="field-head"><label for="style" id="descriptionLabel">Mô tả bài hát</label><output id="styleCount" for="style"></output></div>
+              <p id="coverDescriptionHint" class="hint" hidden>Ghi cách phối bạn muốn: nhạc cụ, nhịp hoặc màu giọng.</p>
               <textarea id="style" rows="3" maxlength="2000" placeholder="Ví dụ: Piano nhẹ, nhịp chậm, không khí hoài niệm"></textarea>
             </div>
             <div class="field" id="lyricsField">
@@ -385,6 +386,7 @@ function setMode(next) {
   const firstField = isCover ? $('lyricsField') : $('descriptionField');
   if (fields.firstElementChild !== firstField) fields.prepend(firstField);
   if (!isCover && !$('sourcePlayer').paused) $('sourcePlayer').pause();
+  $('coverDescriptionHint').hidden = !isCover;
   $('descriptionLabel').textContent = isCover ? 'Mô tả bản cover' : 'Mô tả bài hát';
   $('composition').hidden = isCover;
   $('scoreInput').hidden = isCover;
@@ -675,8 +677,8 @@ function updateProviderHint() {
   const hint = $('providerHint');
   hint.hidden = !displayed;
   hint.textContent = provider.value === 'api'
-    ? 'Khi bấm nhận diện, âm thanh được gửi tới ' + lyricsApiHost + '.'
-    : 'Whisper xử lý âm thanh trên máy này.';
+    ? 'Âm thanh và lời nhận diện được xử lý qua ' + lyricsApiHost + '.'
+    : 'Whisper nhận diện và chia đoạn lời trên máy này.';
 }
 
 async function loadLyricsProviders() {
@@ -703,19 +705,25 @@ async function recognizeLyrics() {
   form.append('provider', provider);
   $('recognize').disabled = true;
   $('recognize').textContent = 'Đang nhận diện…';
-  lyricStatus(provider === 'api' ? 'Đang gửi âm thanh và nhận diện qua API…'
-    : 'Đang nhận diện trên máy. Lần đầu có thể cần tải model.');
+  lyricStatus(provider === 'api' ? 'Đang nhận diện và chia đoạn qua API…'
+    : 'Đang nhận diện và chia đoạn trên máy. Lần đầu có thể cần tải model.');
   try {
     const result = await (await api('/v1/lyrics', {method: 'POST', body: form, signal: current.signal})).json();
     if (recognition !== current) return;
+    const summaries = {
+      provided: 'Bản nhận diện đã có nhãn đoạn.',
+      api: 'Đã nhận diện lời và gợi ý chia đoạn.',
+      suggested: 'Đã nhận diện lời. Nhãn đoạn là gợi ý từ lời và các đoạn lặp.',
+    };
+    const summary = summaries[result.structure] || 'Đã nhận diện lời.';
     if (!$('lyrics').value.trim()) {
       $('lyrics').value = result.lyrics;
       updateCounts();
-      lyricStatus('Đã điền lời nhận diện. Hãy rà lại trước khi tạo bản cover.');
+      lyricStatus(summary + ' Hãy rà lại trước khi tạo cover.');
     } else {
       $('recognizedText').value = result.lyrics;
       $('lyricSuggestion').hidden = mode !== 'cover';
-      lyricStatus('Đã nhận diện xong. Bạn có thể dùng kết quả để thay lời đang nhập.');
+      lyricStatus(summary + ' Bạn có thể dùng kết quả để thay lời đang nhập.');
     }
   } catch (error) {
     if (recognition === current) lyricStatus(error.message, true);

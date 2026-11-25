@@ -109,3 +109,70 @@ def test_api_recognizer_uploads_normalized_audio_and_handles_errors(tmp_path):
     with pytest.raises(LyricsUnavailable, match="giới hạn"):
         recognizer.transcribe(BytesIO(payload), "vi")
     assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("remote_outcome", ["valid", "rewritten", "timeout"])
+def test_recognition_formats_sections_and_preserves_every_word(tmp_path, monkeypatch, remote_outcome):
+    import httpx
+
+    from yue2.lyrics import ApiLyricsRecognizer
+    from yue2.lyric_sections import SYSTEM_PROMPT
+
+    verse_one = "Chiếc đèn bên hiên ngóng đợi\nHàng cây im sau cơn mưa"
+    hook = "Một ngày bình yên trên sân ga\nMình cùng đi qua bao mùa hoa"
+    verse_two = "Chiếc tàu nghiêng qua con dốc\nSợi nắng vương bên ô cửa"
+    bridge = "Rồi ta chợt nghe mùa hè trở lại\nQua những ô cửa nhỏ"
+    blocks = [verse_one, hook, verse_two, hook, bridge]
+    raw = "\n\n".join(blocks)
+    proposed = "\n\n".join(
+        f"[{name}]\n{block}"
+        for name, block in zip(["Verse 1", "Chorus 1", "Verse 2", "Chorus 2", "Bridge 1"], blocks)
+    )
+
+    def transcribe(self, source, language):
+        assert source.read() == b"audio"
+        return {"lyrics": raw, "language": language}
+
+    def remote(request):
+        import json
+        assert request.url.path == "/v1/chat/completions"
+        payload = json.loads(request.content)
+        assert payload["model"] == "gpt-6-luna"
+        assert payload["messages"] == [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": raw},
+        ]
+        if remote_outcome == "timeout":
+            raise httpx.ReadTimeout("test timeout", request=request)
+        candidate = proposed if remote_outcome == "valid" else proposed.replace("hè", "thu")
+        return httpx.Response(200, json={"choices": [{"message": {"content": candidate}}]})
+
+    monkeypatch.setattr(ApiLyricsRecognizer, "transcribe", transcribe)
+    settings = Settings(data_dir=tmp_path, lyrics_api_key="test-only-key")
+    app = create_app(settings, lambda _: None)
+    original_client = httpx.Client
+
+    class MockUpstream(original_client):
+        def __init__(self, **kwargs):
+            super().__init__(**{**kwargs, "transport": httpx.MockTransport(remote)})
+
+    client = TestClient(app)
+    monkeypatch.setattr(httpx, "Client", MockUpstream)
+    response = client.post("/v1/lyrics", files={"audio": ("sample.wav", b"audio")},
+                           data={"provider": "api", "language": "vi"})
+    assert response.status_code == 200
+    assert response.json() == {
+        "lyrics": proposed, "language": "vi",
+        "structure": "api" if remote_outcome == "valid" else "suggested",
+    }
+
+
+def test_local_formatter_finds_refrain_without_paragraph_breaks():
+    from yue2.lyric_sections import add_lyric_sections
+
+    refrain = "Up in the air we turn around and count the colours in the fading light."
+    raw = f"We see the sunset. {refrain} The road curves east. {refrain} The bus has left."
+    result = add_lyric_sections({"lyrics": raw, "language": "en"})
+    assert result["structure"] == "suggested"
+    assert "[Chorus 1]" in result["lyrics"] and "[Chorus 2]" in result["lyrics"]
+    assert " ".join(line for line in result["lyrics"].splitlines() if not line.startswith("[")).split() == raw.split()

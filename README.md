@@ -147,3 +147,10 @@ YUE2_LYRICS_API_KEY=<khoa-proxy-moi>
 ```
 
 Khởi động lại bằng `start_studio.bat`, mở **Cover**, chọn một tệp và chọn **API** trước khi bấm **Nhận diện lời**. Khi đó, Studio gửi bản âm thanh đã chuẩn hóa tới máy chủ API. Chọn **Trên máy** để giữ âm thanh cục bộ. Cả hai chế độ cần FFmpeg trong `PATH`; riêng chế độ tại máy cần Faster-Whisper. Giữ Studio trên localhost khi cấu hình khóa và lưu khóa trong `.env` cục bộ.
+
+Sau khi nhận diện, Studio gợi ý các nhãn như `[Verse 1]`, `[Chorus 1]` và `[Bridge 1]`.
+Khi chọn **API**, Studio đưa văn bản nhận được tới model `gpt-6-luna` trên cùng proxy
+(`YUE2_LYRICS_STRUCTURE_MODEL` có thể đổi model). Nếu API chia đoạn lỗi hoặc làm thay đổi từ
+trong bản chép, Studio sẽ gợi ý theo đoạn lặp trên máy. Khi chọn **Trên máy**, cả nhận diện
+và chia đoạn đều chạy cục bộ. Nhãn đoạn là gợi ý và có thể chỉnh trước khi tạo cover.
+Ô **Mô tả bản cover** được dùng làm mô tả phối khí và giọng hát cho bước tạo nhạc bằng YuE2.

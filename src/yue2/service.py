@@ -56,6 +56,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, f
 
 from .cover import COVER_AUDIO_KEY, COVER_DISABLED, COVER_SHA_KEY, generation_fields
 from .lyrics import ApiLyricsRecognizer, LyricsRecognizer, LyricsUnavailable
+from .lyric_sections import add_lyric_sections
 from .service_store import IdempotencyConflict, JobStore, QueueFull, TERMINAL
 
 JSON_BODY_LIMIT = 256 * 1024
@@ -97,6 +98,7 @@ class Settings(BaseModel):
     lyrics_local_files_only: bool | None = None
     lyrics_api_base_url: str = "https://codex.vorte.me/v1"
     lyrics_api_model: str = "gpt-4o-transcribe"
+    lyrics_structure_model: str = "gpt-6-luna"
     lyrics_api_key: SecretStr | None = Field(default=None, repr=False)
     sheetsage: str = "m-a-p/SheetSage2"
     sheetsage_revision: str | None = None
@@ -981,7 +983,12 @@ def create_app(settings=None, pipeline_factory=None, transcriber=None, lyrics_re
             raise HTTPException(429, "Đang nhận diện một bài khác. Hãy thử lại sau.",
                                 headers={"Retry-After": "5"})
         try:
-            return engine.transcribe(audio.file, None if language == "auto" else language)
+            result = engine.transcribe(audio.file, None if language == "auto" else language)
+            propose = None
+            if api_recognizer is not None and provider == "api" and settings.lyrics_structure_model:
+                def propose(text):
+                    return api_recognizer.propose_sections(text, settings.lyrics_structure_model)
+            return add_lyric_sections(result, propose)
         except LyricsUnavailable as error:
             log.warning("Lyrics recognition unavailable using %s provider", provider)
             raise HTTPException(503, str(error)) from None

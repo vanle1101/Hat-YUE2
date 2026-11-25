@@ -9,6 +9,8 @@ from tempfile import TemporaryDirectory
 import wave
 from urllib.parse import urlsplit
 
+from .lyric_sections import SYSTEM_PROMPT
+
 
 MAX_AUDIO_SECONDS = 12 * 60
 MAX_LYRIC_CHARS = 16_000
@@ -70,12 +72,35 @@ class ApiLyricsRecognizer:
         if (parts.scheme != "https" or not parts.hostname or parts.username or parts.password
                 or parts.query or parts.fragment):
             raise ValueError("YUE2_LYRICS_API_BASE_URL phải là URL HTTPS không chứa thông tin đăng nhập.")
-        self.url = base_url.rstrip("/") + "/audio/transcriptions"
+        self.base_url = base_url.rstrip("/")
+        self.url = self.base_url + "/audio/transcriptions"
         self.host = parts.hostname
         self.model = model
         self._api_key = api_key
         self.work_dir = Path(work_dir)
         self.transport = transport
+
+    def propose_sections(self, text, model):
+        import httpx
+
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": text},
+            ],
+        }
+        try:
+            with httpx.Client(timeout=httpx.Timeout(22, connect=5), follow_redirects=False,
+                              transport=self.transport) as client:
+                response = client.post(
+                    self.base_url + "/chat/completions", json=payload,
+                    headers={"Authorization": "Bearer " + self._api_key},
+                )
+                response.raise_for_status()
+                return response.json()["choices"][0]["message"]["content"]
+        except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError):
+            return None
 
     def transcribe(self, source, language):
         import httpx
