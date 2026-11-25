@@ -1,7 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 import pytest
 from yue2.service_store import JobStore, QueueFull, IdempotencyConflict
-from test_service import service, FakePipeline, REQUEST, wait_for
+from test_service import FakePipeline, FakeTranscriber, REQUEST, service, wait_for
 
 
 def test_atomic_admission_and_stable_retry(tmp_path):
@@ -74,3 +74,33 @@ def test_group_cancels_running_and_queued_children(tmp_path):
         wait_for(lambda: client.get('/v1/jobs/' + group['id']).json()['status'] == 'cancelled')
         assert fake.calls == 1
         fake.release.set()
+
+
+def test_cover_pair_returns_two_playable_versions(tmp_path):
+    transcriber = FakeTranscriber()
+    with service(tmp_path, transcriber=transcriber, backend="torch", ar_nar_overlap=False) as (client, fake, _):
+        def submit(n=None, key=None):
+            data = {"style": REQUEST["style"], "lyrics": REQUEST["lyrics"], "seed": "42"}
+            if n is not None:
+                data["n"] = str(n)
+            return client.post("/v1/covers", data=data, files={"audio": ("source.wav", b"audio", "audio/wav")},
+                               headers={"Idempotency-Key": key} if key else {})
+
+        response = submit(2, "pair-cover")
+        assert response.status_code == 202, response.text
+        group_id = response.json()["id"]
+        result = wait_for(lambda: (value if (value := client.get(f"/v1/jobs/{group_id}").json())["status"]
+                                   in {"succeeded", "failed", "partial_failed"} else None))
+        assert result["status"] == "succeeded"
+        assert [entry["seed"] for entry in result["candidates"]] == [42, 43]
+        outputs = result["result"]["outputs"]
+        assert fake.calls == 2 and len(outputs) == 2 and len(transcriber.calls) == 2
+        assert outputs[0]["audio_url"] != outputs[1]["audio_url"]
+        assert all(client.get(output["audio_url"]).status_code == 200 for output in outputs)
+        retry = submit(2, "pair-cover")
+        assert retry.status_code == 200 and retry.json()["id"] == group_id
+        assert submit(1, "pair-cover").status_code == 409
+        assert submit(3).status_code == 422
+        single = submit()
+        assert single.status_code == 202
+        assert "candidates" not in single.json()

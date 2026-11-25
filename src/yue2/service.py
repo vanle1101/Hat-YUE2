@@ -1006,6 +1006,7 @@ def create_app(settings=None, pipeline_factory=None, transcriber=None, lyrics_re
             style: str = Form(),
             lyrics: str = Form(),
             reference: Literal["free", "close"] = Form(default="free"),
+            n: int = Form(default=1, ge=1, le=2),
             seed: int = Form(default=831001),
             cfg_scale: float | None = Form(default=None),
             idempotency_key: str | None = Header(default=None, min_length=1, max_length=128),
@@ -1020,7 +1021,8 @@ def create_app(settings=None, pipeline_factory=None, transcriber=None, lyrics_re
         if len(payload) > COVER_BODY_LIMIT:
             raise HTTPException(413, "Dữ liệu yêu cầu vượt quá 40 MiB")
         try:
-            public = GenerateRequest(style=style, lyrics=lyrics, cot="full" if reference == "close" else "melody", seed=seed, cfg_scale=cfg_scale)
+            public = GenerateRequest(style=style, lyrics=lyrics, cot="full" if reference == "close" else "melody",
+                                     seed=seed, cfg_scale=cfg_scale, n=n)
         except ValidationError as exc:
             message = exc.errors()[0]["msg"] if exc.errors() else "Yêu cầu cover không hợp lệ"
             raise HTTPException(422, message) from None
@@ -1037,7 +1039,7 @@ def create_app(settings=None, pipeline_factory=None, transcriber=None, lyrics_re
         request[COVER_SHA_KEY] = digest
         try:
             job, created = worker.store.submit(
-                request, settings.max_pending, idempotency_key, admission_id=x_admission_id)
+                request, settings.max_pending, idempotency_key, n=public.n, admission_id=x_admission_id)
         except QueueFull:
             raise HTTPException(429, "Hàng đợi đã đầy", headers={"Retry-After": "5"}) from None
         except IdempotencyConflict:

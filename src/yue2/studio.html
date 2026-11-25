@@ -120,10 +120,41 @@ aside { display: grid; grid-template-columns: minmax(0, .42fr) minmax(0, 1fr); a
 .lookup button { white-space: nowrap; }
 .job { border-top: 1px solid var(--edge); padding: 8px 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
 .job small { color: var(--muted); display: block; margin-top: 3px; }
-#result { margin-top: 15px; scroll-margin-top: 15px; }
-#result h2 { margin-bottom: 8px; }
-#result .actions { margin-top: 8px; }
+#result { margin-bottom: 15px; scroll-margin-top: 15px; }
+.render-layout { display: grid; grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr); gap: 18px; }
+.render-layout.no-input { grid-template-columns: minmax(0, 1fr); }
+.render-main { min-width: 0; }
+.render-state { display: flex; align-items: center; gap: 8px; min-height: 21px; font-weight: 740; }
+.render-state[data-tone="success"] { color: var(--accent); }
+.render-state[data-tone="error"] { color: #ffd0cd; }
+.render-state[data-tone="busy"]::before {
+  content: ""; width: 12px; height: 12px; flex: 0 0 auto; border-radius: 50%;
+  border: 2px solid var(--edge); border-top-color: var(--accent);
+  animation: render-spin .8s linear infinite;
+}
+@keyframes render-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .render-state[data-tone="busy"]::before { animation: none; }
+}
+#resultTitle { margin: 12px 0 6px; font-size: 20px; }
+.render-copy { max-height: 13rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); }
+.render-lyrics { min-width: 0; border: 1px solid var(--edge); border-radius: 10px; background: var(--page); padding: 14px; }
+.render-lyrics h3 { margin: 0 0 9px; font-size: 14px; color: var(--accent); }
+.render-lyrics pre { margin: 0; padding: 0; max-height: 300px; font-family: inherit; line-height: 1.7; }
+.render-meter { width: 100%; height: 8px; margin: 12px 0 4px; accent-color: var(--accent); }
+#progress { color: var(--muted); overflow-wrap: anywhere; }
+#progress.error { color: #ffd0cd; background: transparent; }
+#cancel { margin-block: 8px; }
+.render-versions { display: grid; gap: 8px; margin-top: 10px; }
+.render-version { display: flex; align-items: center; flex-wrap: wrap; gap: 7px 10px; border: 1px solid var(--edge); border-radius: 9px; padding: 8px 10px; }
+.render-version strong { font-size: 13px; white-space: nowrap; }
+.render-version audio { width: auto; flex: 1 1 190px; min-width: 150px; margin: 0; }
+.render-version a { white-space: nowrap; color: var(--accent); font-size: 12px; }
 #result summary { padding-top: 8px; font-size: 13px; }
+@media (max-width: 720px) {
+  .render-layout { grid-template-columns: minmax(0, 1fr); }
+  .render-lyrics pre { max-height: 12rem; }
+}
 pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow: auto; background: var(--page); padding: 10px; border-radius: 7px; }
 #score { min-height: 120px; margin-block: 6px; }
 @media (max-width: 720px) {
@@ -162,6 +193,29 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflo
 
   <div class="workspace">
     <div>
+      <section class="card hidden" id="result" aria-labelledby="resultTitle">
+        <div class="render-layout" id="renderLayout">
+          <div class="render-main">
+            <p class="render-state" id="renderState" role="status"></p>
+            <h2 id="resultTitle">Chi tiết tác vụ</h2>
+            <p id="renderDescription" class="render-copy" tabindex="0" hidden></p>
+            <progress class="render-meter" id="renderMeter" aria-label="Số phiên bản đã xử lý" hidden></progress>
+            <p id="progress" class="hint" aria-live="polite"></p>
+            <button id="cancel" hidden>Hủy tác vụ</button>
+            <div class="render-versions" id="renderVersions"></div>
+            <details id="scoreResult" hidden>
+              <summary>Bản nhạc ABC</summary>
+              <textarea id="score" class="code" aria-label="ABC kết quả" readonly></textarea>
+              <button id="reuse">Dùng ABC để tạo bài mới</button>
+            </details>
+            <details id="renderDetails" hidden><summary>JSON và thời gian xử lý</summary><pre id="raw"></pre></details>
+          </div>
+          <section class="render-lyrics" id="renderLyricsPanel" aria-labelledby="renderLyricsTitle" hidden>
+            <h3 id="renderLyricsTitle">Lời bài hát</h3>
+            <pre id="renderLyrics" tabindex="0"></pre>
+          </section>
+        </div>
+      </section>
       <section class="card composer" aria-label="Soạn bài hát">
         <div id="message" class="status message" role="status"></div>
         <section id="coverInput" aria-label="Bản thu gốc" hidden>
@@ -256,6 +310,13 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflo
               </div>
               <p class="hint" id="referenceHint">Lấy giai điệu và để YuE2 phối khí.</p>
             </fieldset>
+            <fieldset id="coverVariants" hidden>
+              <legend>Số phiên bản</legend>
+              <div class="segmented">
+                <label><input type="radio" name="coverVersions" value="1"><span>1 bản</span></label>
+                <label><input type="radio" name="coverVersions" value="2" checked><span>2 bản</span></label>
+              </div>
+            </fieldset>
           </section>
         </div>
 
@@ -296,19 +357,7 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflo
         </details>
       </section>
 
-      <section class="card hidden" id="result" aria-labelledby="resultTitle">
-        <h2 id="resultTitle">Chi tiết tác vụ</h2>
-        <div id="progress" class="status" role="status"></div>
-        <div class="actions"><button id="cancel">Hủy tác vụ</button></div>
-        <audio id="player" controls class="hidden"></audio>
-        <div class="actions" id="downloads"></div>
-        <details id="scoreResult" hidden>
-          <summary>Bản nhạc ABC</summary>
-          <textarea id="score" class="code" aria-label="ABC kết quả" readonly></textarea>
-          <button id="reuse">Dùng ABC để tạo bài mới</button>
-        </details>
-        <details><summary>JSON và thời gian xử lý</summary><pre id="raw"></pre></details>
-      </section>
+
     </div>
 
     <aside aria-label="Máy chủ và tác vụ">
@@ -327,8 +376,9 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflo
 <script>
 const $ = id => document.getElementById(id);
 const historyKey = 'yue2-studio-jobs-v2';
+const renderInputsKey = 'yue2-studio-render-inputs-v1';
 const jobIdPattern = /^[a-f0-9]{32}$/;
-const terminalStates = ['succeeded', 'truncated', 'failed', 'cancelled'];
+const terminalStates = ['succeeded', 'truncated', 'failed', 'cancelled', 'partial_failed'];
 let mode = 'song';
 let sourceFile = null;
 let sourceURL = null;
@@ -338,16 +388,19 @@ let lyricsApiHost = '';
 let submitting = false;
 let selected = null;
 let poll = null;
-let audioURL = null;
 let knownJobs = [];
+let renderInputs = {};
 try {
   knownJobs = JSON.parse(sessionStorage.getItem(historyKey) || '[]')
     .filter(id => jobIdPattern.test(id)).slice(0, 20);
+  const savedInputs = JSON.parse(sessionStorage.getItem(renderInputsKey) || '{}');
+  if (savedInputs && typeof savedInputs === 'object') renderInputs = savedInputs;
 } catch {}
 
 const labels = {
   queued: 'Đang xếp hàng', running: 'Đang tạo bài hát', succeeded: 'Hoàn tất',
   truncated: 'Chạm giới hạn sinh', failed: 'Tạo thất bại', cancelled: 'Đã hủy',
+  partial_failed: 'Có bản hoàn tất, có bản thất bại hoặc đã hủy',
 };
 const stages = {
   queued: 'Chờ xử lý', claimed_waiting: 'Chuẩn bị xử lý', planning: 'Lập bản nhạc ABC',
@@ -363,7 +416,11 @@ function message(text, error = false) {
 function resultError(error) {
   $('progress').textContent = error.message;
   $('progress').classList.add('error');
-  $('cancel').disabled = true;
+  $('renderState').textContent = 'Không thể xử lý tác vụ';
+  $('renderState').dataset.tone = 'error';
+  $('renderMeter').hidden = true;
+  $('cancel').hidden = !selected?.id || error.status === 404;
+  $('cancel').disabled = $('cancel').hidden;
 }
 
 async function api(path, options = {}) {
@@ -372,7 +429,9 @@ async function api(path, options = {}) {
   const response = await fetch(path, {...options, headers});
   if (!response.ok) {
     const body = await response.json().catch(() => ({detail: response.statusText}));
-    throw Error(typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail || body));
+    const error = Error(typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail || body));
+    error.status = response.status;
+    throw error;
   }
   return response;
 }
@@ -390,6 +449,7 @@ function setMode(next) {
   $('coverMode').setAttribute('aria-pressed', String(isCover));
   $('coverInput').hidden = !isCover;
   $('referenceOptions').hidden = !isCover;
+  $('coverVariants').hidden = !isCover;
   $('editor').hidden = isCover && !sourceFile;
   $('composerActions').hidden = isCover && !sourceFile;
   $('settings').hidden = isCover && !sourceFile;
@@ -485,9 +545,15 @@ function saveBlob(blob, name) {
   setTimeout(() => URL.revokeObjectURL(url), 3000);
 }
 
-function remember(id) {
+function remember(id, input) {
+  if (knownJobs[0] === id && !input) return;
   knownJobs = [id, ...knownJobs.filter(value => value !== id)].slice(0, 20);
-  try { sessionStorage.setItem(historyKey, JSON.stringify(knownJobs)); } catch {}
+  if (input) renderInputs[id] = input;
+  renderInputs = Object.fromEntries(knownJobs.filter(key => renderInputs[key]).map(key => [key, renderInputs[key]]));
+  try {
+    sessionStorage.setItem(historyKey, JSON.stringify(knownJobs));
+    sessionStorage.setItem(renderInputsKey, JSON.stringify(renderInputs));
+  } catch {}
 }
 
 async function refreshHistory() {
@@ -517,103 +583,174 @@ async function refreshHistory() {
   }
 }
 
-function resetMedia() {
-  const player = $('player');
-  player.pause();
-  player.removeAttribute('src');
-  player.classList.add('hidden');
-  if (audioURL) URL.revokeObjectURL(audioURL);
-  audioURL = null;
+function openRenderView(id, input) {
+  clearTimeout(poll);
+  for (const row of selected?.rows.values() || []) if (row.audio) row.audio.pause();
+  const view = {id, input, rows: new Map()};
+  selected = view;
+  $('jobId').value = id || '';
+  $('resultTitle').textContent = input ? (input.cover ? 'Bản cover' : 'Bài hát mới') : 'Chi tiết tác vụ';
+  $('renderDescription').textContent = input?.style || '';
+  $('renderDescription').hidden = !input?.style;
+  $('renderLyrics').textContent = input?.lyrics || '';
+  $('renderLyricsPanel').hidden = !input?.lyrics;
+  $('renderLayout').classList.toggle('no-input', !input?.lyrics);
+  $('renderState').textContent = id ? 'Đang tải tác vụ…' : 'Đang gửi yêu cầu…';
+  $('renderState').dataset.tone = 'busy';
+  $('renderMeter').hidden = false;
+  $('renderMeter').removeAttribute('value');
+  $('progress').textContent = '';
+  $('progress').classList.remove('error');
+  $('cancel').hidden = true;
+  $('cancel').disabled = true;
+  $('raw').textContent = '';
+  $('renderDetails').hidden = true;
+  $('renderVersions').replaceChildren();
   $('score').value = '';
   $('scoreResult').hidden = true;
   $('scoreResult').open = false;
-  $('downloads').replaceChildren();
+  $('result').classList.remove('hidden');
+  $('result').scrollIntoView({block: 'start'});
+  return view;
 }
 
-async function show(id) {
+async function show(id, input = renderInputs[id]) {
   if (!jobIdPattern.test(id)) throw Error('Mã tác vụ không hợp lệ.');
-  clearTimeout(poll);
-  // Track each view separately so a stale response cannot replace a newer selection.
-  const view = {id};
-  selected = view;
-  $('jobId').value = id;
-  $('resultTitle').textContent = 'Tác vụ ' + id.slice(0, 10);
-  $('progress').textContent = 'Đang tải tác vụ…';
-  $('progress').classList.remove('error');
-  $('cancel').disabled = true;
-  $('raw').textContent = '';
-  resetMedia();
-  $('result').classList.remove('hidden');
-  $('result').scrollIntoView({block: 'nearest'});
+  const view = openRenderView(id, input);
   try { await update(view); } catch (error) { if (selected === view) resultError(error); }
 }
 
-function addDownload(path, name, label) {
-  const button = document.createElement('button');
-  button.textContent = label;
-  button.onclick = action(async () => {
-    saveBlob(await (await api(path)).blob(), name);
-  }, resultError);
-  $('downloads').append(button);
+function versionTime(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return '';
+  const length = Math.floor(seconds);
+  return Math.floor(length / 60) + ':' + String(length % 60).padStart(2, '0');
+}
+
+function renderVersion(view, candidate, index, multiple) {
+  let row = view.rows.get(candidate.id);
+  if (!row) {
+    const root = document.createElement('div');
+    root.className = 'render-version';
+    const name = document.createElement('strong');
+    name.textContent = multiple ? 'V' + (index + 1) : 'Bản 1';
+    const state = document.createElement('span');
+    state.className = 'hint';
+    root.append(name, state);
+    row = {root, name, state, audio: null, scoreLink: null};
+    view.rows.set(candidate.id, row);
+    $('renderVersions').append(root);
+  }
+  const stage = candidate.status === 'running' ? stages[candidate.stage] : '';
+  row.state.textContent = [candidate.error?.message || stage || labels[candidate.status],
+    versionTime(candidate.result?.audio_seconds)].filter(Boolean).join(' · ');
+  const {audio_url: audioPath, score_url: scorePath} = candidate.result || {};
+  if (audioPath && !row.audio) {
+    const player = document.createElement('audio');
+    player.controls = true;
+    player.preload = 'none';
+    player.src = audioPath;
+    player.setAttribute('aria-label', 'Nghe ' + row.name.textContent);
+    player.onplay = () => {
+      for (const other of view.rows.values()) if (other.audio && other.audio !== player) other.audio.pause();
+      $('sourcePlayer').pause();
+    };
+    player.onerror = () => { row.state.textContent = 'Không phát được tệp. Bạn có thể thử tải FLAC.'; };
+    row.audio = player;
+    const download = document.createElement('a');
+    download.href = audioPath;
+    download.download = candidate.id + '-audio.flac';
+    download.textContent = 'Tải FLAC';
+    download.setAttribute('aria-label', 'Tải FLAC ' + row.name.textContent);
+    row.root.append(player, download);
+  }
+  if (scorePath && !row.scoreLink) {
+    const score = document.createElement('button');
+    score.type = 'button';
+    score.textContent = 'Mở ABC';
+    score.onclick = action(async () => {
+      const content = await (await api(scorePath)).text();
+      if (selected !== view) return;
+      $('score').value = content;
+      $('scoreResult').hidden = false;
+      $('scoreResult').open = true;
+    }, error => { if (selected === view) row.state.textContent = error.message; });
+    const download = document.createElement('a');
+    download.href = scorePath;
+    download.download = candidate.id + '-score.abc';
+    download.textContent = 'Tải ABC';
+    download.setAttribute('aria-label', 'Tải ABC ' + row.name.textContent);
+    row.scoreLink = score;
+    row.root.append(score, download);
+  }
+}
+
+function renderJob(view, job) {
+  const candidates = Array.isArray(job.candidates) ? job.candidates : [job];
+  const total = candidates.length;
+  const finished = candidates.filter(candidate => terminalStates.includes(candidate.status)).length;
+  const terminal = terminalStates.includes(job.status);
+  const cover = view.input?.cover;
+  const label = cover ? 'cover' : 'bài hát';
+  const title = terminal ? (job.status === 'succeeded' ? 'Đã tạo xong ' + label : labels[job.status])
+    : job.cancel_requested ? 'Đang hủy tác vụ…'
+      : job.status === 'queued' ? 'Đang chờ xử lý…'
+        : 'Đang tạo ' + (total > 1 ? total + ' phiên bản' : label) + '…';
+  $('renderState').textContent = title;
+  $('renderState').dataset.tone = !terminal ? 'busy' : job.status === 'succeeded' ? 'success' : job.status === 'failed' ? 'error' : '';
+  const meter = $('renderMeter');
+  meter.hidden = terminal;
+  meter.max = total || 1;
+  if (total > 1 && finished > 0) meter.value = finished;
+  else meter.removeAttribute('value');
+  const current = candidates.find(candidate => candidate.status === 'running');
+  const stage = current && (stages[current.stage] || labels[current.status]);
+  const progress = total > 1 ? (stage ? 'V' + (candidates.indexOf(current) + 1) + ' · ' + stage + ' · ' : '')
+    + finished + '/' + total + ' bản đã xử lý' : stage || '';
+  $('progress').textContent = [progress, job.error?.message].filter(Boolean).join(' · ');
+  $('progress').classList.toggle('error', Boolean(job.error));
+  $('cancel').hidden = terminal;
+  $('cancel').disabled = terminal || Boolean(job.cancel_requested);
+  $('raw').textContent = JSON.stringify(job, null, 2);
+  $('renderDetails').hidden = false;
+  candidates.forEach((candidate, index) => {
+    if (total > 1 || candidate.result) renderVersion(view, candidate, index, total > 1);
+  });
+  return terminal;
+}
+
+function schedulePoll(view, delay) {
+  clearTimeout(poll);
+  poll = setTimeout(() => update(view).catch(error => {
+    if (selected !== view) return;
+    if (error.status === 404) return resultError(error);
+    $('progress').textContent = 'Mất kết nối tạm thời. Đang thử lại…';
+    schedulePoll(view, 5000);
+  }), delay);
 }
 
 async function update(view) {
-  const {id} = view;
-  const job = await (await api('/v1/jobs/' + id)).json();
+  const job = await (await api('/v1/jobs/' + view.id)).json();
   if (selected !== view) return;
-  remember(id);
-  const state = labels[job.status] || job.status;
-  const stage = stages[job.stage] || job.stage;
-  const tokens = 'ABC ' + (job.tokens?.abc || 0) + ' / Nhạc ' + (job.tokens?.semantic || 0) + ' token';
-  $('progress').textContent = [state, stage, tokens, job.error?.message].filter(Boolean).join(' · ');
-  $('progress').classList.toggle('error', Boolean(job.error));
-  $('raw').textContent = JSON.stringify(job, null, 2);
-  const terminal = terminalStates.includes(job.status);
-  $('cancel').disabled = terminal;
-  if (!terminal) {
+  remember(view.id);
+  if (renderJob(view, job)) {
     clearTimeout(poll);
-    poll = setTimeout(() => update(view).catch(error => {
-      if (selected === view) resultError(error);
-    }), 2000);
-    return;
-  }
-  void refreshHistory();
-  if (!job.result) return;
-
-  const {audio_url: audioPath, score_url: scorePath} = job.result;
-  $('downloads').replaceChildren();
-  if (audioPath) addDownload(audioPath, id + '-audio.flac', 'Tải FLAC');
-  if (scorePath) addDownload(scorePath, id + '-score.abc', 'Tải ABC');
-  const [audio, score] = await Promise.allSettled([
-    audioPath && api(audioPath).then(response => response.blob()),
-    scorePath && api(scorePath).then(response => response.text()),
-  ]);
-  if (selected !== view) return;
-  if (audio.status === 'fulfilled' && audio.value) {
-    if (audioURL) URL.revokeObjectURL(audioURL);
-    audioURL = URL.createObjectURL(audio.value);
-    $('player').src = audioURL;
-    $('player').classList.remove('hidden');
-  }
-  if (score.status === 'fulfilled' && score.value) {
-    $('score').value = score.value;
-    $('scoreResult').hidden = false;
-  }
-  if (audio.status === 'rejected' || score.status === 'rejected') {
-    $('progress').textContent += ' · Không thể tải một số tệp kết quả.';
+    void refreshHistory();
+  } else {
+    schedulePoll(view, 2000);
   }
 }
 
 async function submit() {
   const payload = request();
-  const isCover = mode === 'cover';
-  const file = sourceFile;
+  const cover = mode === 'cover';
+  const input = {cover, style: payload.style, lyrics: payload.lyrics};
   let body = JSON.stringify(payload);
-  if (isCover) {
-    if (!file) throw Error('Hãy chọn tệp nhạc gốc để cover.');
+  if (cover) {
+    if (!sourceFile) throw Error('Hãy chọn tệp nhạc gốc để cover.');
     body = new FormData();
-    body.append('audio', file);
+    body.append('audio', sourceFile);
     body.append('reference', selection('reference'));
+    body.append('n', selection('coverVersions'));
     for (const [key, value] of Object.entries(payload)) {
       if (key !== 'cot') body.append(key, String(value));
     }
@@ -622,11 +759,19 @@ async function submit() {
   $('submit').disabled = true;
   $('submit').textContent = 'Đang gửi…';
   message('');
+  const pending = openRenderView(null, input);
   try {
     const headers = {'Idempotency-Key': 'studio-' + Date.now() + '-' + Math.random().toString(36).slice(2)};
-    const job = await (await api(isCover ? '/v1/covers' : '/v1/jobs', {method: 'POST', headers, body})).json();
-    await show(job.id);
+    const job = await (await api(cover ? '/v1/covers' : '/v1/jobs', {method: 'POST', headers, body})).json();
+    remember(job.id, input);
+    if (selected === pending) {
+      pending.id = job.id;
+      $('jobId').value = job.id;
+      if (!renderJob(pending, job)) schedulePoll(pending, 2000);
+    }
     void refreshHistory();
+  } catch (error) {
+    if (selected === pending) resultError(error);
   } finally {
     submitting = false;
     $('submit').disabled = false;
@@ -861,7 +1006,7 @@ $('jobId').onkeydown = event => { if (event.key === 'Enter') $('lookup').click()
 $('refresh').onclick = action(refreshHistory);
 $('cancel').onclick = action(async () => {
   const view = selected;
-  if (!view) return;
+  if (!view?.id) return;
   $('cancel').disabled = true;
   try {
     await api('/v1/jobs/' + view.id + '/cancel', {method: 'POST'});
