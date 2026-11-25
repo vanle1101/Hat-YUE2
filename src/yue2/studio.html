@@ -375,7 +375,7 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflo
                 <label><input type="radio" name="reference" value="close"><span>Bám bản gốc</span></label>
                 <label><input type="radio" name="reference" value="free" checked><span>Phối tự do</span></label>
               </div>
-              <p class="hint" id="referenceHint">Lấy giai điệu và để YuE2 phối khí.</p>
+              <p class="hint" id="referenceHint">Lấy giai điệu để phối khí mới.</p>
             </fieldset>
             <fieldset id="coverVariants" hidden>
               <legend>Số phiên bản</legend>
@@ -429,7 +429,7 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflo
 
     <aside aria-label="Máy chủ và tác vụ">
       <section class="card" id="runtimeCard" aria-label="Trạng thái máy chủ">
-        <div class="engine"><span class="dot" aria-hidden="true"></span><span id="runtimePill">YuE2-3B</span></div>
+        <div class="engine"><span class="dot" aria-hidden="true"></span><span id="runtimePill">Máy chủ</span></div>
         <p id="availability" class="hint" role="status">Đang kiểm tra máy chủ…</p>
       </section>
       <section class="card" id="historyCard" aria-labelledby="historyTitle">
@@ -852,7 +852,7 @@ async function health() {
     const state = await (await api('/console/status')).json();
     const runtime = state.runtime;
     const device = runtime?.device?.toUpperCase();
-    $('runtimePill').textContent = ['YuE2-3B', runtime?.backend, device].filter(Boolean).join(' · ');
+    $('runtimePill').textContent = ['Máy chủ', runtime?.backend, device].filter(Boolean).join(' · ');
     $('availability').textContent = state.message;
     $('runtimeCard').dataset.state = state.available ? 'ready' : 'offline';
   } catch {
@@ -1034,7 +1034,7 @@ $('chooseAudio').ondrop = event => {
 for (const input of document.querySelectorAll('input[name="reference"]')) {
   input.onchange = () => {
     $('referenceHint').textContent = selection('reference') === 'close'
-      ? 'Chép cả giai điệu và hợp âm từ bản gốc.' : 'Lấy giai điệu và để YuE2 phối khí.';
+      ? 'Chép cả giai điệu và hợp âm từ bản gốc.' : 'Lấy giai điệu để phối khí mới.';
   };
 }
 $('recognize').onclick = recognizeLyrics;
