@@ -30,6 +30,11 @@ COVER_BODY_LIMIT = 40 * 1024 * 1024
 UNLIMITED_QUOTA = 999999
 MAX_CACHED_SOURCES = 32
 SOURCE_RETENTION_SECONDS = 6 * 3600
+STYLE_MAX_LENGTH = 2000
+VI_CHAR_RE = re.compile(
+    r"[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]",
+    re.I,
+)
 
 STUDIO_DIR = Path(__file__).with_name("studio")
 STUDIO_ASSETS = {
@@ -103,13 +108,15 @@ def _transcode_flac_to_mp3(flac_bytes: bytes, mp3_path: Path) -> bool:
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         return False
-    tmp_flac = mp3_path.with_suffix(".flac.tmp")
-    tmp_mp3 = mp3_path.with_suffix(".mp3.tmp")
+    # Write to .part staging files so *.mp3 cache pruning never treats a half-written
+    # artifact as ready and pass `-f mp3` explicitly so FFmpeg muxes cleanly.
+    tmp_flac = mp3_path.with_suffix(".flac.part")
+    tmp_mp3 = mp3_path.with_suffix(".mp3.part")
     try:
         tmp_flac.write_bytes(flac_bytes)
         proc = subprocess.run(
             [ffmpeg, "-y", "-nostdin", "-v", "error", "-i", str(tmp_flac),
-             "-vn", "-c:a", "libmp3lame", "-q:a", "2", str(tmp_mp3)],
+             "-vn", "-c:a", "libmp3lame", "-q:a", "2", "-f", "mp3", str(tmp_mp3)],
             capture_output=True, timeout=180,
         )
         if proc.returncode != 0 or not tmp_mp3.is_file() or tmp_mp3.stat().st_size == 0:
@@ -122,6 +129,18 @@ def _transcode_flac_to_mp3(flac_bytes: bytes, mp3_path: Path) -> bool:
             tmp_flac.unlink()
         with suppress(OSError):
             tmp_mp3.unlink()
+
+
+def _prepare_style(style: str, lyrics: str, *, default: str = "") -> str:
+    """Ensure Vietnamese lyrics include a language style tag and obey GenerateRequest limits."""
+    cleaned = style.strip() or default
+    has_vietnamese = bool(VI_CHAR_RE.search(lyrics) or VI_CHAR_RE.search(cleaned))
+    if has_vietnamese and "vietnamese" not in cleaned.lower():
+        cleaned = f"Vietnamese, {cleaned}" if cleaned else "Vietnamese"
+    if len(cleaned) > STYLE_MAX_LENGTH:
+        trimmed = cleaned[:STYLE_MAX_LENGTH].rsplit(",", 1)[0].strip()
+        cleaned = trimmed or cleaned[:STYLE_MAX_LENGTH].strip()
+    return cleaned
 
 
 def _cover_history_path():
@@ -424,6 +443,7 @@ def create_app(upstream=None):
             lyrics = "[Instrumental]\n"
             if "instrumental" not in style.lower():
                 style = f"{style}, instrumental" if style else "instrumental"
+        style = _prepare_style(style, "" if instrumental else lyrics)
         max_variants = 1 if os.environ.get("YUE2_DEFAULT_VARIANTS", "2").strip() == "1" else 2
         n = 1 if (body.get("n") == 1 or max_variants == 1) else 2
         cot = body.get("cot") if body.get("cot") in {"full", "melody", "off"} else "full"
@@ -542,7 +562,11 @@ def create_app(upstream=None):
         style = str(body.get("style") or "").strip()
         vocal_gender = str(body.get("vocal_gender") or "auto")
         voice_tag = {"female": "female lead vocal", "male": "male lead vocal"}.get(vocal_gender, "")
-        combined_style = ", ".join(part for part in (description, style, voice_tag) if part)
+        combined_style = _prepare_style(
+            ", ".join(part for part in (description, style, voice_tag) if part),
+            lyrics,
+            default="pop",
+        )
         reference = "close" if body.get("melody_adherence") == "high" else "free"
         seed = random.randint(1, 2_147_483_647)
 
@@ -556,7 +580,7 @@ def create_app(upstream=None):
                 upstream + "/v1/covers",
                 files={"audio": (meta["filename"], audio_bytes, meta["mime_type"])},
                 data={
-                    "style": combined_style or "pop",
+                    "style": combined_style,
                     "lyrics": lyrics,
                     "reference": reference,
                     "n": "1" if os.environ.get("YUE2_DEFAULT_VARIANTS", "2").strip() == "1" else "2",

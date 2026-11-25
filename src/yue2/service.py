@@ -94,7 +94,7 @@ class Settings(BaseModel):
     artifact_cleanup_interval_seconds: int = Field(default=300, ge=10)
     warmup: bool = True
     local_files_only: bool = False
-    lyrics_model: str = "small"
+    lyrics_model: str = "medium"
     lyrics_local_files_only: bool | None = None
     lyrics_api_base_url: str = "https://codex.vorte.me/v1"
     lyrics_api_model: str = "gpt-4o-transcribe"

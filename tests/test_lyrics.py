@@ -52,6 +52,9 @@ def test_recognizer_decodes_audio_and_removes_temporary_files(tmp_path):
     class Model:
         def transcribe(self, samples, **options):
             assert options["language"] == "vi"
+            assert options["condition_on_previous_text"] is False
+            assert options["no_speech_threshold"] == 0.55
+            assert options["compression_ratio_threshold"] == 2.2
             assert samples.shape == (16000,)
             assert samples.dtype == np.float32
             return iter([SimpleNamespace(text=" Lời tiếng Việt "), SimpleNamespace(text=" ")]), SimpleNamespace(language="vi")

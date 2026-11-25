@@ -1,8 +1,11 @@
 import json
+import shutil
+import subprocess
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
-from yue2.web_gateway import create_app
+from yue2.web_gateway import _prepare_style, create_app
 
 
 def replace_upstream(app, handler):
@@ -250,4 +253,84 @@ def test_api_audio_mp3_transcode_and_fallback(tmp_path, monkeypatch):
         assert mp3.headers["content-type"] == "audio/mpeg"
         assert f"{child_id}.mp3" in mp3.headers["content-disposition"]
 
+        app.state.client = original
+
+
+def test_prepare_style_adds_vietnamese_for_vi_lyrics_and_clamps_length():
+    assert _prepare_style("lounge jazz, female vocal", "Cuộc sống đâu lường") == "Vietnamese, lounge jazz, female vocal"
+    assert _prepare_style("Vietnamese, acoustic", "Cuộc sống đâu lường") == "Vietnamese, acoustic"
+    assert _prepare_style("acoustic", "Hello world") == "acoustic"
+    long_style = ", ".join(["tag"] * 600)
+    clamped = _prepare_style(long_style, "Lời Việt")
+    assert len(clamped) <= 2000
+    assert clamped.startswith("Vietnamese, ")
+
+
+def test_cover_and_text_routes_auto_tag_vietnamese_style(tmp_path, monkeypatch):
+    monkeypatch.setenv("YUE2_WEB_SOURCE_DIR", str(tmp_path))
+    app = create_app("http://127.0.0.1:8015")
+    captured = []
+
+    def handler(request):
+        captured.append((request.url.path, request.content))
+        if request.url.path == "/v1/jobs":
+            body = json.loads(request.content)
+            assert body["style"].startswith("Vietnamese, ")
+            return httpx.Response(202, json={"id": "a" * 32, "status": "queued", "candidates": []})
+        if request.url.path == "/v1/covers":
+            assert b"Vietnamese, lounge jazz, Pop, female lead vocal" in request.content
+            return httpx.Response(202, json={"id": "b" * 32, "status": "queued", "candidates": []})
+        raise AssertionError(request.url)
+
+    with TestClient(app) as client:
+        original = replace_upstream(app, handler)
+        r1 = client.post("/api/jobs", json={"style": "lounge jazz", "lyrics": "Ngày nắng nhạt màu", "cot": "full", "seed": 1})
+        assert r1.status_code == 202
+        src = client.post("/api/cover/sources", content=b"RIFFdemo", headers={"X-Audio-Extension": "wav"})
+        sid = src.json()["source_id"]
+        r2 = client.post("/api/cover/jobs", json={
+            "source_id": sid,
+            "lyrics": "Cuộc sống đâu lường",
+            "music_description": "lounge jazz",
+            "style": "Pop",
+            "melody_adherence": "high",
+            "vocal_gender": "female",
+        })
+        assert r2.status_code == 202
+        assert len(captured) == 2
+        app.state.client = original
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="requires FFmpeg")
+def test_api_audio_mp3_real_ffmpeg_transcode(tmp_path, monkeypatch):
+    monkeypatch.setenv("YUE2_WEB_SOURCE_DIR", str(tmp_path))
+    wav_in = tmp_path / "in.wav"
+    flac_out = tmp_path / "in.flac"
+    ffmpeg = shutil.which("ffmpeg")
+    subprocess.run(
+        [ffmpeg, "-y", "-nostdin", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.2",
+         str(wav_in)],
+        check=True,
+    )
+    subprocess.run(
+        [ffmpeg, "-y", "-nostdin", "-v", "error", "-i", str(wav_in), str(flac_out)],
+        check=True,
+    )
+    flac_bytes = flac_out.read_bytes()
+    child_id = "d" * 32
+    app = create_app("http://127.0.0.1:8015")
+
+    def handler(request):
+        if request.url.path == f"/v1/jobs/{child_id}/audio":
+            return httpx.Response(200, content=flac_bytes, headers={"content-type": "audio/flac"})
+        raise AssertionError(request.url)
+
+    with TestClient(app) as client:
+        original = replace_upstream(app, handler)
+        resp = client.get(f"/api/audio/{child_id}.mp3")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "audio/mpeg"
+        assert resp.content[:3] == b"ID3" or resp.content[:2] in {b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"}
+        assert not (tmp_path / "mp3_cache" / f"{child_id}.mp3.part").exists()
+        assert (tmp_path / "mp3_cache" / f"{child_id}.mp3").is_file()
         app.state.client = original

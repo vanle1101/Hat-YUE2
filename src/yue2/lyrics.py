@@ -173,6 +173,8 @@ class LyricsRecognizer:
             segments, info = self._load().transcribe(
                 audio, language=language, task="transcribe", beam_size=5,
                 condition_on_previous_text=False,
+                no_speech_threshold=0.55,
+                compression_ratio_threshold=2.2,
             )
             lines = [segment.text.strip() for segment in segments if segment.text.strip()]
         return lyric_result("\n".join(lines), info.language)
