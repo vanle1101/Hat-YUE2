@@ -57,7 +57,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, f
 from .cover import COVER_AUDIO_KEY, COVER_DISABLED, COVER_SHA_KEY, generation_fields
 from .lyrics import (
     ApiLyricsRecognizer, DEFAULT_GEMINI_BASE_URL, GeminiLyricsRecognizer,
-    LyricsRecognizer, LyricsUnavailable,
+    HybridGeminiLyricsRecognizer, LyricsRecognizer, LyricsUnavailable,
 )
 from .lyric_sections import add_lyric_sections
 from .service_store import IdempotencyConflict, JobStore, QueueFull, TERMINAL
@@ -97,7 +97,8 @@ class Settings(BaseModel):
     artifact_cleanup_interval_seconds: int = Field(default=300, ge=10)
     warmup: bool = True
     local_files_only: bool = False
-    lyrics_model: str = "medium"
+    lyrics_model: str = "large-v3-turbo"
+    lyrics_device: Literal["auto", "cpu", "cuda"] = "auto"
     lyrics_local_files_only: bool | None = None
     lyrics_api_base_url: str = "https://codex.vorte.me/v1"
     lyrics_api_model: str = "gpt-4o-transcribe"
@@ -105,6 +106,7 @@ class Settings(BaseModel):
     lyrics_api_key: SecretStr | None = Field(default=None, repr=False)
     gemini_api_base_url: str = DEFAULT_GEMINI_BASE_URL
     gemini_api_model: str = "gemini-3-flash-preview"
+    gemini_audio_direct: bool = False
     gemini_api_key: SecretStr | None = Field(default=None, repr=False)
     sheetsage: str = "m-a-p/SheetSage2"
     sheetsage_revision: str | None = None
@@ -889,16 +891,27 @@ def create_app(settings=None, pipeline_factory=None, transcriber=None, lyrics_re
     recognizer = lyrics_recognizer or LyricsRecognizer(
         settings.lyrics_model, local_files_only=lyrics_offline,
         work_dir=worker.root / "lyrics-tmp",
+        device=settings.lyrics_device,
+        unload_after=not settings.resident_models,
     )
     gemini_key = settings.gemini_api_key.get_secret_value().strip() if settings.gemini_api_key else ""
     api_key = settings.lyrics_api_key.get_secret_value().strip() if settings.lyrics_api_key else ""
     if gemini_key:
-        api_recognizer = GeminiLyricsRecognizer(
-            gemini_key,
-            model=settings.gemini_api_model,
-            base_url=settings.gemini_api_base_url,
-            work_dir=worker.root / "lyrics-tmp",
-        )
+        if settings.gemini_audio_direct:
+            api_recognizer = GeminiLyricsRecognizer(
+                gemini_key,
+                model=settings.gemini_api_model,
+                base_url=settings.gemini_api_base_url,
+                work_dir=worker.root / "lyrics-tmp",
+            )
+        else:
+            api_recognizer = HybridGeminiLyricsRecognizer(
+                recognizer,
+                gemini_key,
+                model=settings.gemini_api_model,
+                base_url=settings.gemini_api_base_url,
+                work_dir=worker.root / "lyrics-tmp",
+            )
     elif api_key:
         api_recognizer = ApiLyricsRecognizer(
             settings.lyrics_api_base_url, settings.lyrics_api_model, api_key,

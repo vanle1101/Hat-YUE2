@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import base64
+import gc
+import logging
 import os
 from pathlib import Path
 import re
@@ -11,7 +13,9 @@ from tempfile import TemporaryDirectory
 import wave
 from urllib.parse import urlsplit
 
-from .lyric_sections import SYSTEM_PROMPT
+from .lyric_sections import HEADING, SYSTEM_PROMPT
+
+log = logging.getLogger("yue2.lyrics")
 
 
 MAX_AUDIO_SECONDS = 12 * 60
@@ -210,44 +214,95 @@ class ApiLyricsRecognizer:
 
 
 class LyricsRecognizer:
-    def __init__(self, model, *, local_files_only, work_dir):
+    def __init__(self, model, *, local_files_only, work_dir, device="auto", unload_after=False):
         self.model = model
         self.local_files_only = local_files_only
         self.work_dir = Path(work_dir)
+        self.device = device
+        self.unload_after = unload_after
         self._whisper = None
+        self._loaded_device = None
 
-    def _load(self):
-        if self._whisper is None:
+    def _choose_device(self):
+        if self.device == "cpu":
+            return "cpu", "int8"
+        try:
+            import torch
+            if torch.cuda.is_available():
+                free, _total = torch.cuda.mem_get_info()
+                if self.device == "cuda" or free >= 3.5 * 1024 ** 3:
+                    return "cuda", "float16"
+        except Exception:
+            if self.device == "cuda":
+                raise LyricsUnavailable("Không dùng được CUDA cho Whisper; đổi YUE2_LYRICS_DEVICE=auto hoặc cpu.") from None
+        return "cpu", "int8"
+
+    def close(self):
+        loaded = self._loaded_device
+        self._whisper = None
+        self._loaded_device = None
+        if loaded == "cuda":
+            gc.collect()
             try:
-                from faster_whisper import WhisperModel
-            except (ImportError, OSError) as error:
-                raise LyricsUnavailable(
-                    "Chưa cài nhận diện lời. Cài faster-whisper trong môi trường YuE2 rồi khởi động lại."
-                ) from error
-            try:
-                self._whisper = WhisperModel(
-                    self.model, device="cpu", compute_type="int8",
-                    cpu_threads=min(4, os.cpu_count() or 1),
-                    local_files_only=self.local_files_only,
-                )
-            except Exception as error:
-                raise LyricsUnavailable(
-                    "Không nạp được Whisper. Kiểm tra model hoặc cấu hình YUE2_LYRICS_MODEL."
-                ) from error
-        return self._whisper
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
+
+    def _load(self, *, force_cpu=False):
+        if self._whisper is not None and not force_cpu:
+            return self._whisper
+        try:
+            from faster_whisper import WhisperModel
+        except (ImportError, OSError) as error:
+            raise LyricsUnavailable(
+                "Chưa cài nhận diện lời. Cài faster-whisper trong môi trường YuE2 rồi khởi động lại."
+            ) from error
+        device, compute_type = ("cpu", "int8") if force_cpu else self._choose_device()
+        kwargs = {"local_files_only": self.local_files_only}
+        if device == "cpu":
+            kwargs["cpu_threads"] = min(4, os.cpu_count() or 1)
+        try:
+            self._whisper = WhisperModel(self.model, device=device, compute_type=compute_type, **kwargs)
+            self._loaded_device = device
+            return self._whisper
+        except Exception as error:
+            if device == "cuda" and self.device == "auto":
+                log.warning("Whisper CUDA load failed (%s); falling back to CPU int8", error)
+                return self._load(force_cpu=True)
+            raise LyricsUnavailable(
+                "Không nạp được Whisper. Kiểm tra model hoặc cấu hình YUE2_LYRICS_MODEL."
+            ) from error
+
+    def _run_transcribe(self, model, audio, language):
+        segments, info = model.transcribe(
+            audio, language=language, task="transcribe", beam_size=5,
+            condition_on_previous_text=False,
+            no_speech_threshold=0.55,
+            compression_ratio_threshold=2.2,
+        )
+        lines = [segment.text.strip() for segment in segments if segment.text.strip()]
+        return lines, info.language
 
     def transcribe(self, source, language):
         self.work_dir.mkdir(parents=True, exist_ok=True)
         with TemporaryDirectory(prefix="lyrics-", dir=self.work_dir) as tmp:
             audio = decode_audio(source, Path(tmp))
-            segments, info = self._load().transcribe(
-                audio, language=language, task="transcribe", beam_size=5,
-                condition_on_previous_text=False,
-                no_speech_threshold=0.55,
-                compression_ratio_threshold=2.2,
-            )
-            lines = [segment.text.strip() for segment in segments if segment.text.strip()]
-        return lyric_result("\n".join(lines), info.language)
+            try:
+                try:
+                    lines, detected = self._run_transcribe(self._load(), audio, language)
+                except Exception as error:
+                    if self._loaded_device == "cuda" and self.device == "auto":
+                        log.warning("Whisper CUDA transcribe failed (%s); retrying on CPU int8", error)
+                        self.close()
+                        lines, detected = self._run_transcribe(self._load(force_cpu=True), audio, language)
+                    else:
+                        raise
+            finally:
+                if self.unload_after and self._loaded_device == "cuda":
+                    self.close()
+        return lyric_result("\n".join(lines), detected)
 
 
 class GeminiLyricsRecognizer:
@@ -347,6 +402,108 @@ class GeminiLyricsRecognizer:
                 return lyric_result(extracted, language or "auto")
 
         raise LyricsUnavailable(last_error or "Gemini API tạm thời không khả dụng.")
+
+
+def _lyric_word_count(text: str) -> int:
+    return sum(
+        len(line.split()) for line in text.splitlines()
+        if line.strip() and not HEADING.fullmatch(line.strip())
+    )
+
+
+def proofread_lyrics_with_gemini(
+        raw_text: str,
+        language: str | None,
+        api_key: str,
+        *,
+        model: str = "gemini-3-flash-preview",
+        base_url: str = DEFAULT_GEMINI_BASE_URL,
+        transport=None) -> str | None:
+    """Repair Whisper ASR homophone/diacritic errors and add song section tags (fail-open)."""
+    import httpx
+
+    cleaned_in = raw_text.strip()
+    if not cleaned_in or not api_key:
+        return None
+    try:
+        resolved_base, _ = _validate_https_base_url(base_url, "YUE2_GEMINI_API_BASE_URL")
+    except ValueError:
+        return None
+    models = _dedupe_models(model, GEMINI_FALLBACK_MODELS)
+    lang_hint = {
+        "vi": "The song is in Vietnamese; repair broken diacritics and phonetic mishearings into natural Vietnamese.",
+        "en": "The song is in English; repair phonetic mishearings into natural English.",
+    }.get(language, "Preserve the original sung language and repair phonetic mishearings/diacritics naturally.")
+    prompt = (
+        "You are a song lyrics proofreader repairing Whisper ASR transcription errors from singing over music.\n"
+        f"{lang_hint}\n"
+        "Strict rules:\n"
+        "1. Fix ONLY obvious phonetic/homophone ASR mishearings and diacritic errors so each line makes natural sense.\n"
+        "2. NEVER invent new verses and NEVER replace the song with a different song; keep the original structure, order, and chorus repeats.\n"
+        "3. Remove obvious non-sung crowd chatter or MC banter if present.\n"
+        "4. Format cleanly with numbered section tags ([Verse 1], [Chorus 1], [Pre-Chorus 1], [Bridge 1], [Outro 1]), short lines, and blank lines between sections.\n"
+        "5. Output ONLY the cleaned lyrics with no explanations and no markdown code fences.\n\n"
+        f"ASR transcript:\n{cleaned_in[:MAX_LYRIC_CHARS]}"
+    )
+    raw_words = _lyric_word_count(cleaned_in)
+    with httpx.Client(timeout=httpx.Timeout(35, connect=5), follow_redirects=False,
+                      transport=transport) as client:
+        for model_name in models:
+            try:
+                response = client.post(
+                    f"{resolved_base}/models/{model_name}:generateContent",
+                    headers={"x-goog-api-key": api_key},
+                    json={
+                        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                        "generationConfig": {"temperature": 0.1},
+                    },
+                )
+                if response.status_code != 200:
+                    continue
+                candidate = _strip_code_fences(_extract_gemini_text(response.json()))
+                if not candidate or len(candidate) > MAX_LYRIC_CHARS:
+                    continue
+                cand_words = _lyric_word_count(candidate)
+                if raw_words >= 8 and not (0.5 * raw_words <= cand_words <= 1.5 * raw_words):
+                    continue
+                return candidate
+            except (httpx.HTTPError, ValueError, KeyError, TypeError):
+                continue
+    return None
+
+
+class HybridGeminiLyricsRecognizer:
+    """Acoustic-anchored Whisper transcription followed by Gemini ASR proofreading."""
+
+    def __init__(self, local_recognizer, api_key, *, model="gemini-3-flash-preview",
+                 base_url=DEFAULT_GEMINI_BASE_URL, work_dir, transport=None):
+        self.local_recognizer = local_recognizer
+        self.base_url, self.host = _validate_https_base_url(base_url, "YUE2_GEMINI_API_BASE_URL")
+        self._api_key = api_key
+        self.model = model
+        self.work_dir = Path(work_dir)
+        self.transport = transport
+        self._audio_fallback = GeminiLyricsRecognizer(
+            api_key, model=model, base_url=base_url, work_dir=work_dir, transport=transport,
+        )
+
+    def propose_sections(self, text, model=None):
+        return self._audio_fallback.propose_sections(text, model=model)
+
+    def transcribe(self, source, language):
+        try:
+            raw = self.local_recognizer.transcribe(source, language)
+        except LyricsUnavailable:
+            source.seek(0)
+            return self._audio_fallback.transcribe(source, language)
+        detected = raw.get("language") or language
+        polished = proofread_lyrics_with_gemini(
+            raw["lyrics"], detected, self._api_key,
+            model=self.model, base_url=self.base_url, transport=self.transport,
+        )
+        if polished:
+            return lyric_result(polished, detected or "auto")
+        return raw
 
 
 def optimize_style_with_gemini(

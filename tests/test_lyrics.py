@@ -258,3 +258,79 @@ def test_gemini_recognizer_transcribes_with_fallback_and_handles_errors(tmp_path
         "nhạc jazz", "Cuộc sống", "fake-gemini-key",
         transport=httpx.MockTransport(fail_handler),
     ) is None
+
+
+def test_hybrid_gemini_proofreads_whisper_and_guards_against_hallucination(tmp_path):
+    import httpx
+    from yue2.lyrics import HybridGeminiLyricsRecognizer, proofread_lyrics_with_gemini
+
+    raw_text = "Của sống đau lương trước điều gì, bàn tay rễu đang nắm thịt chặt"
+    cleaned_text = "[Verse 1]\nCuộc sống đâu lường trước điều gì\nBàn tay dẫu đang nắm thật chặt"
+
+    class FakeLocal:
+        def transcribe(self, source, language):
+            return {"lyrics": raw_text, "language": "vi"}
+
+    def good_handler(request):
+        return httpx.Response(200, json={
+            "candidates": [{"content": {"parts": [{"text": cleaned_text}]}}]
+        })
+
+    hybrid = HybridGeminiLyricsRecognizer(
+        FakeLocal(), "fake-gemini-key", work_dir=tmp_path,
+        transport=httpx.MockTransport(good_handler),
+    )
+    assert hybrid.transcribe(BytesIO(b"wav"), "vi") == {"lyrics": cleaned_text, "language": "vi"}
+
+    def hallucinated_handler(request):
+        return httpx.Response(200, json={
+            "candidates": [{"content": {"parts": [{"text": " ".join(["fake"] * 60)}]}}]
+        })
+
+    assert proofread_lyrics_with_gemini(
+        raw_text, "vi", "fake-gemini-key",
+        transport=httpx.MockTransport(hallucinated_handler),
+    ) is None
+
+    hybrid_failopen = HybridGeminiLyricsRecognizer(
+        FakeLocal(), "fake-gemini-key", work_dir=tmp_path,
+        transport=httpx.MockTransport(hallucinated_handler),
+    )
+    assert hybrid_failopen.transcribe(BytesIO(b"wav"), "vi") == {"lyrics": raw_text, "language": "vi"}
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="requires FFmpeg")
+def test_lyrics_recognizer_cuda_error_falls_back_to_cpu(tmp_path, monkeypatch):
+    source = BytesIO()
+    with wave.open(source, "wb") as audio:
+        audio.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+        audio.writeframes(b"\0" * 3200)
+    payload = source.getvalue()
+
+    class BrokenCudaModel:
+        def transcribe(self, samples, **options):
+            def gen():
+                raise RuntimeError("libcudnn_ops.so.9 not found")
+                yield  # pragma: no cover
+            return gen(), SimpleNamespace(language="vi")
+
+    class GoodCpuModel:
+        def transcribe(self, samples, **options):
+            return iter([SimpleNamespace(text="Cuộc sống đâu lường")]), SimpleNamespace(language="vi")
+
+    recognizer = LyricsRecognizer("small", local_files_only=True, work_dir=tmp_path, device="auto", unload_after=True)
+    loads = []
+
+    def fake_load(*, force_cpu=False):
+        loads.append(force_cpu)
+        if not force_cpu:
+            recognizer._loaded_device = "cuda"
+            recognizer._whisper = BrokenCudaModel()
+        else:
+            recognizer._loaded_device = "cpu"
+            recognizer._whisper = GoodCpuModel()
+        return recognizer._whisper
+
+    monkeypatch.setattr(recognizer, "_load", fake_load)
+    assert recognizer.transcribe(BytesIO(payload), "vi") == {"lyrics": "Cuộc sống đâu lường", "language": "vi"}
+    assert loads == [False, True]
