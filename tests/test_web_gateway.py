@@ -209,4 +209,11 @@ def test_api_bridge_routes_text_and_cover_flows(tmp_path, monkeypatch):
         assert len(history["items"]) == 1
         assert history["items"][0]["id"] == cover_job_id
 
+        monkeypatch.setenv("YUE2_DEFAULT_VARIANTS", "1")
+        single_resp = client.post("/api/jobs", json={
+            "n": 2, "style": "piano", "instrumental": True, "cot": "full", "seed": 9,
+        })
+        assert single_resp.status_code == 202
+        assert json.loads(seen[-1][2])["n"] == 1
+
         app.state.client = original

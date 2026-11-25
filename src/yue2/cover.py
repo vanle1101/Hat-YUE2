@@ -98,11 +98,16 @@ class MelodyTranscriber:
     def transcribe(self, audio, *, melody_only=True):
         model = self.load()
         device_type = self._torch_device.type if self._torch_device is not None else "cpu"
+        dtype = "fp32"
+        if device_type == "cuda":
+            import torch
+            cap = torch.cuda.get_device_capability(self._torch_device) if torch.cuda.is_available() else (0, 0)
+            dtype = "bf16" if cap >= (8, 0) else "fp32"
         # SheetSage2's default prompts include harmony for a complete lead sheet.
         options = {"prompts": list(MELODY_PROMPTS)} if melody_only else {}
         result = model.transcribe(
             str(audio), melody_only=melody_only,
-            dtype="bf16" if device_type == "cuda" else "fp32", **options,
+            dtype=dtype, **options,
         )
         return require_melody_abc(result)
 

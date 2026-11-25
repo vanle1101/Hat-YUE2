@@ -32,6 +32,25 @@ class _PrefixCache:
         return self.key_cache[layer_idx][:, :, :end], self.value_cache[layer_idx][:, :, :end]
 
 
+def _select_attention_backend(device, dtype, head_dim, requested="auto"):
+    """Select an AR decode attention kernel compatible with the CUDA compute capability."""
+    if requested not in {"auto", "flash", "cudnn", "sdpa"}:
+        raise ValueError("attention_backend must be auto, flash, cudnn, or sdpa")
+    ampere = device.type == "cuda" and torch.cuda.get_device_capability(device) >= (8, 0)
+    fused = device.type == "cuda" and dtype in {torch.bfloat16, torch.float16} and head_dim % 8 == 0
+    flash = ampere and fused and head_dim <= 256 and hasattr(torch.ops.aten, "_flash_attention_forward") and (
+        "seqused_k" in str(torch.ops.aten._flash_attention_forward.default._schema))
+    # Torch 2.10 is pinned by the package. Its native variable-length FA requires
+    # Ampere+ (sm_80+); pre-Ampere GPUs (e.g. Turing T4 sm_75) fall back to SDPA.
+    if requested == "auto":
+        return "flash" if flash else "cudnn" if (ampere and fused and torch.backends.cudnn.is_available()) else "sdpa"
+    if requested == "flash" and not flash:
+        raise ValueError("Pinned PyTorch variable-length CUDA FlashAttention is unavailable")
+    if requested == "cudnn" and not (fused and torch.backends.cudnn.is_available()):
+        raise ValueError("cuDNN attention requires a supported CUDA dtype/head dimension")
+    return requested
+
+
 class GraphAR:
     """Fixed-capacity decode for batch one or a synchronized CFG branch pair.
 
@@ -71,21 +90,8 @@ class GraphAR:
         self.max_tokens, self.branches = int(max_tokens), len(prefixes)
         self.capacity = max(map(len, prefixes)) + self.max_tokens
         self.capture, self.graph, self.output = capture, None, None
-        if attention_backend not in {"auto", "flash", "cudnn", "sdpa"}:
-            raise ValueError("attention_backend must be auto, flash, cudnn, or sdpa")
-        fused = self.device.type == "cuda" and self.dtype in {torch.bfloat16, torch.float16} and config.head_dim % 8 == 0
-        flash = fused and config.head_dim <= 256 and hasattr(torch.ops.aten, "_flash_attention_forward") and (
-            "seqused_k" in str(torch.ops.aten._flash_attention_forward.default._schema))
-        # Torch 2.10 is pinned by the package. Its native variable-length FA
-        # accepts GPU effective lengths; the public masked SDPA can select a
-        # much slower math kernel. Keep a cuDNN/public-SDPA fallback explicit.
-        if attention_backend == "auto":
-            attention_backend = "flash" if flash else "cudnn" if fused and torch.backends.cudnn.is_available() else "sdpa"
-        if attention_backend == "flash" and not flash:
-            raise ValueError("Pinned PyTorch variable-length CUDA FlashAttention is unavailable")
-        if attention_backend == "cudnn" and not (fused and torch.backends.cudnn.is_available()):
-            raise ValueError("cuDNN attention requires a supported CUDA dtype/head dimension")
-        self.attention_backend = attention_backend
+        self.attention_backend = _select_attention_backend(
+            self.device, self.dtype, config.head_dim, attention_backend)
         self.ready, self.closed, self.steps = False, False, 0
         # Sequence-major layout makes the packed FA view contiguous without
         # copying all cached keys at each decode step.

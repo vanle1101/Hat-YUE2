@@ -154,6 +154,7 @@ def build_pipeline(settings):
         vllm_max_num_batched_tokens=settings.vllm_max_num_batched_tokens,
         vllm_gpu_memory_utilization=settings.vllm_gpu_memory_utilization,
         vae_core_frames=settings.vae_core_frames, local_files_only=settings.local_files_only,
+        offload_ar=not settings.resident_models and not settings.ar_nar_overlap,
         generation_config=GenerationConfig(ode_steps=settings.ode_steps), progress=False)
 
 
@@ -627,10 +628,14 @@ class JobWorker:
             raise InterruptedError("Cancelled before transcription")
         path = self._cover_audio_file(raw)
         transcriber = self._melody_transcriber()
-        if request["cot"] == "full":
-            abc = transcriber.transcribe(path, melody_only=False)
-        else:
-            abc = transcriber.transcribe(path)
+        try:
+            if request["cot"] == "full":
+                abc = transcriber.transcribe(path, melody_only=False)
+            else:
+                abc = transcriber.transcribe(path)
+        finally:
+            if not self.settings.resident_models and hasattr(transcriber, "close"):
+                transcriber.close()
         request.pop(COVER_AUDIO_KEY, None)
         request.pop(COVER_SHA_KEY, None)
         request["abc"] = abc

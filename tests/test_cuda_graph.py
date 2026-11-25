@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 import torch
 
-from yue2.cuda_graph import GraphAR
+from yue2.cuda_graph import GraphAR, _select_attention_backend
 from yue2.modeling_yue2 import StaticKVCache, YuE2Config, YuE2ForCausalLM
 
 
@@ -131,7 +131,8 @@ def test_real_cuda_graph_bfloat16_parity(model, prefixes, backend, fused):
         graph = GraphAR(model, prefixes, 5, attention_backend=backend, fuse_projections=fused)
         torch.testing.assert_close(graph.prefill(), expected, atol=0, rtol=0)
         assert graph.graph is not None
-        assert graph.attention_backend == ("flash" if backend == "auto" else "cudnn")
+        expected_auto = "flash" if torch.cuda.get_device_capability(0) >= (8, 0) else "sdpa"
+        assert graph.attention_backend == (expected_auto if backend == "auto" else "cudnn")
         for keys, values in zip(graph.keys, graph.values):
             for branch, prefix in enumerate(prefixes):
                 keys[branch, len(prefix)+1:].fill_(1000)
@@ -142,3 +143,10 @@ def test_real_cuda_graph_bfloat16_parity(model, prefixes, backend, fused):
             actual = graph.step(token).clone()
             torch.testing.assert_close(actual, expected, atol=.002, rtol=.02)
         graph.close()
+
+
+def test_select_attention_backend_pre_ampere_falls_back_to_sdpa(monkeypatch):
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda *args, **kwargs: (7, 5))
+    assert _select_attention_backend(torch.device("cuda", 0), torch.bfloat16, 128, "auto") == "sdpa"
+    with pytest.raises(ValueError, match="FlashAttention"):
+        _select_attention_backend(torch.device("cuda", 0), torch.bfloat16, 128, "flash")

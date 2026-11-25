@@ -326,7 +326,8 @@ def create_app(upstream=None):
             lyrics = "[Instrumental]\n"
             if "instrumental" not in style.lower():
                 style = f"{style}, instrumental" if style else "instrumental"
-        n = 1 if body.get("n") == 1 else 2
+        max_variants = 1 if os.environ.get("YUE2_DEFAULT_VARIANTS", "2").strip() == "1" else 2
+        n = 1 if (body.get("n") == 1 or max_variants == 1) else 2
         cot = body.get("cot") if body.get("cot") in {"full", "melody", "off"} else "full"
         raw_seed = body.get("seed")
         seed = raw_seed if isinstance(raw_seed, int) and not isinstance(raw_seed, bool) and raw_seed >= 0 else random.randint(1, 2_147_483_647)
@@ -460,7 +461,7 @@ def create_app(upstream=None):
                     "style": combined_style or "pop",
                     "lyrics": lyrics,
                     "reference": reference,
-                    "n": "2",
+                    "n": "1" if os.environ.get("YUE2_DEFAULT_VARIANTS", "2").strip() == "1" else "2",
                     "seed": str(seed),
                 },
                 headers=headers,
