@@ -48,6 +48,11 @@ def song_chunks(prefix, codec, seed, context=CONTEXT):
             for a, b in ranges]
 
 
+def _default_query_block(q, backend):
+    pre_ampere = q.device.type == "cuda" and torch.cuda.get_device_capability(q.device) < (8, 0)
+    return 256 if (q.device.type != "cuda" or backend == "math" or pre_ampere) else len(q)
+
+
 def attention(q, k, v, *, causal=False, backend="sdpa", query_chunk_size=None):
     """Attend [tokens, heads, dim] tensors without materializing a song mask.
 
@@ -67,7 +72,7 @@ def attention(q, k, v, *, causal=False, backend="sdpa", query_chunk_size=None):
     if query_chunk_size is not None and (isinstance(query_chunk_size, bool) or
                                         not isinstance(query_chunk_size, Integral) or query_chunk_size < 1):
         raise ValueError("query_chunk_size must be a positive integer")
-    block = query_chunk_size or (len(q) if q.device.type == "cuda" and backend != "math" else 256)
+    block = query_chunk_size or _default_query_block(q, backend)
     query = q.transpose(0, 1).unsqueeze(0)
     key = k.transpose(0, 1).unsqueeze(0)
     value = v.transpose(0, 1).unsqueeze(0)
@@ -446,16 +451,17 @@ def synthesize_batch(model, prefixes, codecs, seeds, steps=32, context=CONTEXT,
 
 
 @contextmanager
-def _offload_ar(model, enabled):
-    """Temporarily move unused AR modules; this model cannot serve concurrently."""
-    modules = [model.model.embed_tokens, model.lm_head]
-    for layer in model.model.layers:
-        modules.extend((layer.input_layernorm, layer.self_attn, layer.post_attention_layernorm, layer.mlp))
+def _offload_modules(modules, enabled):
     moved = []
     try:
         if enabled:
             for module in modules:
-                device = next(module.parameters()).device
+                if module is None:
+                    continue
+                first_param = next(module.parameters(), None)
+                if first_param is None:
+                    continue
+                device = first_param.device
                 if device.type != "cpu":
                     module.to(device="cpu")
                     moved.append((module, device))
@@ -465,6 +471,31 @@ def _offload_ar(model, enabled):
     finally:
         for module, device in moved:
             module.to(device=device)
+
+
+@contextmanager
+def _offload_ar(model, enabled):
+    """Temporarily move unused AR modules; this model cannot serve concurrently."""
+    modules = [model.model.embed_tokens, model.lm_head]
+    for layer in model.model.layers:
+        modules.extend((layer.input_layernorm, layer.self_attn, layer.post_attention_layernorm, layer.mlp))
+    with _offload_modules(modules, enabled):
+        yield
+
+
+@contextmanager
+def _offload_nar(model, enabled):
+    """Temporarily move unused NAR modules during AR prefill; keeps vae2llm/pos_emb intact."""
+    modules = [getattr(model, "llm2vae", None), getattr(model, "time_embedder", None)]
+    for layer in model.model.layers:
+        modules.extend((
+            getattr(layer, "nar_input_layernorm", None),
+            getattr(layer, "nar_self_attn", None),
+            getattr(layer, "nar_pre_mlp_layernorm", None),
+            getattr(layer, "nar_mlp", None),
+        ))
+    with _offload_modules(modules, enabled):
+        yield
 
 
 @torch.inference_mode()
@@ -488,7 +519,8 @@ def synthesize(model, prefix: Sequence[int], codec: Sequence[int], seed: int,
     for chunk_index, chunk in enumerate(chunks):
         if cancelled is not None and cancelled():
             raise InterruptedError("Cancelled before acoustic prefill")
-        engine = CachedNAR(model, chunk, attention, query_chunk_size)
+        with _offload_nar(model, offload_ar):
+            engine = CachedNAR(model, chunk, attention, query_chunk_size)
         # Drop the prefix cache before restoring AR weights, including on
         # cancellation/failure, to keep the restoration memory peak bounded.
         with _offload_ar(model, offload_ar):

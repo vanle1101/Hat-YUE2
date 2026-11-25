@@ -334,3 +334,11 @@ def test_offload_restores_modules_when_generation_raises(monkeypatch):
             assert all(module.device.type == "cpu" for module in modules)
             raise RuntimeError("request failed")
     assert all(module.moves == ["cpu", "meta"] for module in modules)
+
+
+def test_default_query_block_tiles_pre_ampere_cuda(monkeypatch):
+    fake_q = SimpleNamespace(device=SimpleNamespace(type="cuda"), __len__=lambda self: 8192)
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda *args, **kwargs: (7, 5))
+    assert nar._default_query_block(fake_q, "sdpa") == 256
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda *args, **kwargs: (8, 0))
+    assert nar._default_query_block(fake_q, "sdpa") == 8192
