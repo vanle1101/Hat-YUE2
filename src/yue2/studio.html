@@ -49,23 +49,11 @@ p { line-height: 1.5; }
   background: linear-gradient(140deg, #fb5570, #e81b48); color: #fff; font-weight: 760;
 }
 .brand-mark { width: 43px; height: 43px; border-radius: 12px; font-size: 23px; }
-.settings-menu { position: relative; justify-self: end; }
-.settings-menu > summary {
-  list-style: none; display: grid; place-items: center; width: 41px; height: 41px; border: 1px solid transparent;
-  border-radius: 50%; font-size: 23px;
+.history-link {
+  justify-self: end; border: 1px solid var(--edge); border-radius: 999px; padding: 8px 13px;
+  text-decoration: none; font-size: 13px; font-weight: 650; color: var(--ink); background: var(--surface);
 }
-.settings-menu > summary::-webkit-details-marker { display: none; }
-.settings-menu[open] > summary, .settings-menu > summary:hover { background: var(--surface); border-color: var(--edge); }
-.menu-links {
-  position: absolute; right: 0; top: calc(100% + 6px); z-index: 2; min-width: 182px; display: grid; gap: 3px;
-  border: 1px solid var(--edge); border-radius: 13px; padding: 6px;
-  background: var(--surface); box-shadow: 0 10px 22px #39132612;
-}
-.menu-links a, .menu-links button {
-  display: block; color: var(--ink); padding: 9px 10px; text-align: left;
-  border: 0; border-radius: 8px; text-decoration: none; background: transparent; font-size: 13px;
-}
-.menu-links a:hover, .menu-links button:hover { background: var(--soft-rose); }
+.history-link:hover { border-color: var(--border-rose); color: var(--accent); }
 main { padding-block: 8px 40px; }
 h2 { font-size: 16px; letter-spacing: -.015em; }
 .tabs {
@@ -162,13 +150,7 @@ audio { width: 100%; height: 36px; margin-top: 10px; }
 #recognitionStatus { margin-top: 7px; }
 #lyricSuggestion { margin-block: 8px; padding: 8px; background: var(--raised); border-radius: 7px; }
 #lyricSuggestion textarea { margin-block: 6px; }
-.composer-actions { gap: 10px; padding-top: 14px; }
-.composer-actions summary, .options summary { padding-block: 5px; color: var(--muted); font-size: 13px; }
-.composer-actions details[open] .actions { margin-top: 5px; }
-.options { margin-top: 10px; padding-top: 5px; border-top: 1px solid var(--edge); scroll-margin-top: 10px; }
-.options details { margin-top: 9px; }
-.options button { margin-block: 6px; }
-.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
+.composer-actions { justify-content: flex-end; padding-top: 14px; }
 aside { display: grid; grid-template-columns: minmax(0, .42fr) minmax(0, 1fr); align-items: start; gap: 14px; margin-top: 16px; }
 aside .card { border-color: var(--edge); border-radius: 16px; }
 .engine { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; margin-bottom: 6px; }
@@ -220,13 +202,12 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflo
 @media (max-width: 650px) {
   .topbar { grid-template-columns: minmax(0, 1fr) auto; gap: 10px; padding-block: 12px; }
   .tabs { grid-row: 2; grid-column: 1 / -1; justify-self: center; }
-  .settings-menu { grid-row: 1; grid-column: 2; }
+  .history-link { grid-row: 1; grid-column: 2; }
   .field, .choice-panel, .upload { padding: 11px; }
   .source { flex-wrap: wrap; }
   .source .actions { margin-left: auto; }
   .lyric-tools { justify-content: flex-start; }
   .composer-actions .primary { width: 100%; }
-  .grid { grid-template-columns: minmax(0, 1fr); }
 }
 </style>
 </head>
@@ -241,13 +222,7 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflo
       <button type="button" id="songMode" aria-pressed="true">Tạo bài hát</button>
       <button type="button" id="coverMode" aria-pressed="false">Cover</button>
     </div>
-    <details class="settings-menu" id="settingsMenu">
-      <summary aria-label="Cài đặt và điều hướng" title="Cài đặt và điều hướng">⚙</summary>
-      <nav class="menu-links" aria-label="Điều hướng">
-        <button type="button" id="openSettings">Cài đặt nâng cao</button>
-        <a href="#historyCard">Lịch sử tác vụ</a>
-      </nav>
-    </details>
+    <a class="history-link" href="#historyCard">Lịch sử</a>
   </div>
 </header>
 <main>
@@ -266,7 +241,6 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflo
             <details id="scoreResult" hidden>
               <summary>Bản nhạc ABC</summary>
               <textarea id="score" class="code" aria-label="ABC kết quả" readonly></textarea>
-              <button id="reuse">Dùng ABC để tạo bài mới</button>
             </details>
             <details id="renderDetails" hidden><summary>JSON và thời gian xử lý</summary><pre id="raw"></pre></details>
           </div>
@@ -388,40 +362,8 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflo
         </div>
 
         <div class="composer-actions" id="composerActions">
-          <details>
-            <summary>Lời mẫu và tệp JSON</summary>
-            <div class="actions">
-              <button id="example">Dùng lời mẫu</button>
-              <button id="importButton">Nhập JSON</button>
-              <button id="exportButton">Xuất JSON</button>
-            </div>
-          </details>
           <button class="primary" id="submit">Bắt đầu tạo bài hát</button>
         </div>
-        <input id="importFile" type="file" accept=".json,application/json" hidden>
-
-        <details class="options" id="settings">
-          <summary>Cài đặt nâng cao</summary>
-          <div class="grid">
-            <div id="composition"><label for="cot">Cách lập bản nhạc</label>
-              <select id="cot">
-                <option value="full">Giai điệu và hợp âm</option>
-                <option value="melody">Chỉ lập giai điệu</option>
-                <option value="off">Tạo trực tiếp</option>
-              </select>
-            </div>
-            <div><label for="seed">Seed</label><input id="seed" type="number" min="0" max="9007199254740991" value="42"></div>
-          </div>
-          <label for="cfg">Mức bám mô tả (CFG)</label>
-          <input id="cfg" type="number" min="0" max="20" step=".1" placeholder="Mặc định">
-          <details id="scoreInput">
-            <summary>Nhập hoặc chỉnh bản nhạc ABC</summary>
-            <p class="hint">Chọn giai điệu và hợp âm nếu ABC có hợp âm. Chọn chỉ lập giai điệu nếu ABC chỉ có nốt.</p>
-            <button id="abcImportButton">Nhập tệp ABC</button>
-            <input id="abcFile" type="file" accept=".abc,.txt" hidden>
-            <textarea id="abc" class="code" rows="6" maxlength="64000" aria-label="ABC đầu vào"></textarea>
-          </details>
-        </details>
       </section>
 
 
@@ -519,7 +461,6 @@ function setMode(next) {
   $('coverVariants').hidden = !isCover;
   $('editor').hidden = isCover && !sourceFile;
   $('composerActions').hidden = isCover && !sourceFile;
-  $('settings').hidden = isCover && !sourceFile;
   $('lyricTools').hidden = !isCover;
   $('vocalOptions').hidden = !isCover;
   updateProviderHint();
@@ -531,8 +472,6 @@ function setMode(next) {
   if (!isCover && !$('sourcePlayer').paused) $('sourcePlayer').pause();
   $('coverDescriptionHint').hidden = !isCover;
   $('descriptionLabel').textContent = isCover ? 'Mô tả bản cover' : 'Mô tả bài hát';
-  $('composition').hidden = isCover;
-  $('scoreInput').hidden = isCover;
   $('submit').textContent = submitting ? 'Đang gửi…' : isCover ? 'Tạo bản cover' : 'Bắt đầu tạo bài hát';
   message('');
 }
@@ -560,57 +499,13 @@ function combinedStyle() {
 }
 
 function request() {
-  const seed = Number($('seed').value);
-  if (!Number.isSafeInteger(seed) || seed < 0) throw Error('Seed phải là số nguyên không âm hợp lệ.');
-  const payload = {style: combinedStyle(), lyrics: $('lyrics').value.trim(), seed};
+  const payload = {style: combinedStyle(), lyrics: $('lyrics').value.trim(), seed: 42};
   if (!payload.style || !payload.lyrics) throw Error('Hãy nhập lời và mô tả bài hát hoặc chọn một thể loại.');
   if (payload.style.length > $('style').maxLength || payload.lyrics.length > $('lyrics').maxLength) {
     throw Error('Phong cách hoặc lời bài hát vượt giới hạn ký tự.');
   }
-  if ($('cfg').value !== '') {
-    const cfg = Number($('cfg').value);
-    if (!Number.isFinite(cfg) || cfg < 0 || cfg > 20) throw Error('CFG phải từ 0 đến 20.');
-    payload.cfg_scale = cfg;
-  }
-  payload.cot = mode === 'cover' ? (selection('reference') === 'close' ? 'full' : 'melody') : $('cot').value;
-  if (mode === 'cover') return payload;
-  const abc = $('abc').value.trim();
-  if (abc.length > $('abc').maxLength) throw Error('Bản nhạc ABC vượt giới hạn ký tự.');
-  if (abc && payload.cot === 'off') throw Error('Khi dùng ABC, hãy chọn lập giai điệu hoặc lập giai điệu và hợp âm.');
-  if (abc) payload.abc = abc;
+  payload.cot = mode === 'cover' && selection('reference') === 'free' ? 'melody' : 'full';
   return payload;
-}
-
-function fill(payload) {
-  if ('style' in payload) {
-    for (const checkbox of document.querySelectorAll('input[name="genre"]')) checkbox.checked = false;
-    document.querySelector('input[name="voice"][value=""]').checked = true;
-    $('customStyle').value = '';
-  }
-  for (const key of ['style', 'lyrics', 'cot', 'seed', 'abc']) {
-    if (key in payload) $(key).value = payload[key] ?? '';
-    else if (key === 'abc') $('abc').value = '';
-  }
-  $('cfg').value = payload.cfg_scale ?? '';
-  updateCounts();
-}
-
-function openScoreInput(abc) {
-  setMode('song');
-  $('abc').value = abc;
-  if ($('cot').value === 'off') $('cot').value = 'melody';
-  $('settings').open = true;
-  $('scoreInput').open = true;
-  $('abc').focus();
-}
-
-function saveBlob(blob, name) {
-  const link = document.createElement('a');
-  const url = URL.createObjectURL(blob);
-  link.href = url;
-  link.download = name;
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 3000);
 }
 
 function remember(id, input) {
@@ -862,16 +757,6 @@ async function health() {
   setTimeout(health, 10000);
 }
 
-$('openSettings').onclick = () => {
-  $('settingsMenu').open = false;
-  $('settings').hidden = false;
-  $('settings').open = true;
-  $('settings').scrollIntoView({block: 'start'});
-  $('settings').querySelector('summary').focus({preventScroll: true});
-};
-for (const link of $('settingsMenu').querySelectorAll('a')) {
-  link.onclick = () => { $('settingsMenu').open = false; };
-}
 $('songMode').onclick = () => setMode('song');
 $('coverMode').onclick = () => setMode('cover');
 for (const id of ['style', 'lyrics']) $(id).addEventListener('input', updateCounts);
@@ -1046,38 +931,6 @@ $('applyLyrics').onclick = () => {
   $('lyrics').focus();
   lyricStatus('Đã dùng lời nhận diện. Bạn có thể chỉnh lại bên dưới.');
 };
-$('example').onclick = () => fill({
-  style: 'Vietnamese, warm piano, soft strings and light drums, 88 BPM',
-  lyrics: '[Verse]\nNắng nghiêng qua mái hiên nhà\nMình nghe thành phố ngân nga\n\n[Chorus]\nMai này dù bước chân xa\nCòn câu hát đưa ta về nhà',
-  cot: 'full', seed: 42,
-});
-$('exportButton').onclick = action(() => saveBlob(
-  new Blob([JSON.stringify(request(), null, 2)], {type: 'application/json'}), 'yue2-request.json',
-));
-$('importButton').onclick = () => $('importFile').click();
-$('importFile').onchange = action(async () => {
-  const file = $('importFile').files[0];
-  if (!file) return;
-  try {
-    const payload = JSON.parse(await file.text());
-    fill(payload);
-    if (mode === 'cover' && ['full', 'melody'].includes(payload.cot)) {
-      const reference = payload.cot === 'full' ? 'close' : 'free';
-      const radio = document.querySelector('input[name="reference"][value="' + reference + '"]');
-      radio.checked = true;
-      radio.onchange();
-    }
-    const hadSamplingOptions = 'abc_sampling' in payload || 'semantic_sampling' in payload;
-    message(hadSamplingOptions ? 'Đã nhập JSON. API hiện tại không nhận thông số lấy mẫu.' : 'Đã nhập tham số từ JSON.');
-  } finally { $('importFile').value = ''; }
-});
-$('abcImportButton').onclick = () => $('abcFile').click();
-$('abcFile').onchange = action(async () => {
-  const file = $('abcFile').files[0];
-  if (!file) return;
-  try { openScoreInput(await file.text()); } finally { $('abcFile').value = ''; }
-});
-$('reuse').onclick = () => openScoreInput($('score').value);
 $('submit').onclick = action(submit);
 $('lookup').onclick = action(() => show($('jobId').value.trim()));
 $('jobId').onkeydown = event => { if (event.key === 'Enter') $('lookup').click(); };
