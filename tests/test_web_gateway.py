@@ -334,3 +334,30 @@ def test_api_audio_mp3_real_ffmpeg_transcode(tmp_path, monkeypatch):
         assert not (tmp_path / "mp3_cache" / f"{child_id}.mp3.part").exists()
         assert (tmp_path / "mp3_cache" / f"{child_id}.mp3").is_file()
         app.state.client = original
+
+
+def test_api_recognize_lyrics_falls_back_to_local_when_api_returns_503(tmp_path, monkeypatch):
+    monkeypatch.setenv("YUE2_WEB_SOURCE_DIR", str(tmp_path))
+    app = create_app("http://127.0.0.1:8015")
+    providers_called = []
+
+    def handler(request):
+        if request.url.path == "/v1/lyrics/providers":
+            return httpx.Response(200, json={"api_host": "generativelanguage.googleapis.com"})
+        if request.url.path == "/v1/lyrics":
+            if b'name="provider"\r\n\r\napi' in request.content:
+                providers_called.append("api")
+                return httpx.Response(503, json={"detail": "Gemini busy"})
+            providers_called.append("local")
+            return httpx.Response(200, json={"lyrics": "[Verse 1]\nFallback lyrics", "structure": "suggested"})
+        raise AssertionError(request.url)
+
+    with TestClient(app) as client:
+        original = replace_upstream(app, handler)
+        src = client.post("/api/cover/sources", content=b"RIFFdemo", headers={"X-Audio-Extension": "wav"})
+        sid = src.json()["source_id"]
+        resp = client.post("/api/cover/recognize-lyrics", json={"source_id": sid, "language": "vi"})
+        assert resp.status_code == 200
+        assert providers_called == ["api", "local"]
+        assert resp.json()["lyrics"] == "[Verse 1]\nFallback lyrics"
+        app.state.client = original

@@ -179,3 +179,82 @@ def test_local_formatter_finds_refrain_without_paragraph_breaks():
     assert result["structure"] == "suggested"
     assert "[Chorus 1]" in result["lyrics"] and "[Chorus 2]" in result["lyrics"]
     assert " ".join(line for line in result["lyrics"].splitlines() if not line.startswith("[")).split() == raw.split()
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="requires FFmpeg")
+def test_gemini_recognizer_transcribes_with_fallback_and_handles_errors(tmp_path):
+    import json
+    import httpx
+    from yue2.lyrics import GeminiLyricsRecognizer, optimize_style_with_gemini
+
+    source = BytesIO()
+    with wave.open(source, "wb") as audio:
+        audio.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+        audio.writeframes(b"\0" * 3200)
+    payload = source.getvalue()
+
+    calls = []
+
+    def respond(request):
+        calls.append(request.url.path)
+        assert request.headers["x-goog-api-key"] == "fake-gemini-key"
+        body = json.loads(request.content)
+        assert body["contents"][0]["parts"][0]["inline_data"]["mime_type"] == "audio/mp3"
+        if len(calls) == 1:
+            return httpx.Response(503, json={"error": {"message": "high demand"}})
+        if len(calls) == 2:
+            return httpx.Response(200, json={
+                "candidates": [{
+                    "content": {
+                        "parts": [
+                            {"text": "thinking...", "thought": True},
+                            {"text": "```\n[Verse 1]\nCuộc sống đâu lường\n```"},
+                        ]
+                    }
+                }]
+            })
+        if len(calls) == 3:
+            return httpx.Response(200, json={
+                "candidates": [{"content": {"parts": [{"text": "NO_VOCALS"}]}}]
+            })
+        return httpx.Response(403, json={"error": {"message": "forbidden"}})
+
+    rec = GeminiLyricsRecognizer(
+        "fake-gemini-key", model="gemini-3-flash-preview",
+        work_dir=tmp_path, transport=httpx.MockTransport(respond),
+    )
+    res = rec.transcribe(BytesIO(payload), "vi")
+    assert res == {"lyrics": "[Verse 1]\nCuộc sống đâu lường", "language": "vi"}
+    assert len(calls) == 2
+
+    with pytest.raises(ValueError, match="Chưa nhận diện"):
+        rec.transcribe(BytesIO(payload), "auto")
+
+    with pytest.raises(LyricsUnavailable, match="từ chối khóa"):
+        rec.transcribe(BytesIO(payload), "vi")
+    assert not list(tmp_path.iterdir())
+
+    settings = Settings(data_dir=tmp_path / "svc", gemini_api_key="fake-gemini-key")
+    assert "fake-gemini-key" not in repr(settings)
+    client = TestClient(create_app(settings, lambda _: None))
+    assert client.get("/v1/lyrics/providers").json() == {"api_host": "generativelanguage.googleapis.com"}
+
+    def style_handler(request):
+        assert request.headers["x-goog-api-key"] == "fake-gemini-key"
+        return httpx.Response(200, json={
+            "candidates": [{"content": {"parts": [{"text": "Vietnamese, lounge jazz, solo piano, warm female lead vocal"}]}}]
+        })
+
+    polished = optimize_style_with_gemini(
+        "nhạc jazz nhẹ chỉ piano", "Cuộc sống đâu lường", "fake-gemini-key",
+        transport=httpx.MockTransport(style_handler),
+    )
+    assert polished == "Vietnamese, lounge jazz, solo piano, warm female lead vocal"
+
+    def fail_handler(request):
+        return httpx.Response(503, json={"error": {"message": "busy"}})
+
+    assert optimize_style_with_gemini(
+        "nhạc jazz", "Cuộc sống", "fake-gemini-key",
+        transport=httpx.MockTransport(fail_handler),
+    ) is None

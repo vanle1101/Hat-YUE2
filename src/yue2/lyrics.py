@@ -1,8 +1,10 @@
 """Local and OpenAI-compatible lyric transcription with bounded audio decoding."""
 from __future__ import annotations
 
+import base64
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 from tempfile import TemporaryDirectory
@@ -15,6 +17,17 @@ from .lyric_sections import SYSTEM_PROMPT
 MAX_AUDIO_SECONDS = 12 * 60
 MAX_LYRIC_CHARS = 16_000
 SAMPLE_RATE = 16_000
+DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+GEMINI_FALLBACK_MODELS = (
+    "gemini-3-flash-preview",
+    "gemini-3.6-flash",
+    "gemini-flash-lite-latest",
+)
+GEMINI_STYLE_FALLBACK_MODELS = (
+    "gemini-flash-lite-latest",
+    "gemini-3-flash-preview",
+    "gemini-3.6-flash",
+)
 
 
 class LyricsUnavailable(RuntimeError):
@@ -55,6 +68,63 @@ def decode_audio(source, directory):
     with wave.open(str(decode_wav(source, directory)), "rb") as audio:
         pcm = audio.readframes(audio.getnframes())
     return np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0
+
+
+def encode_mp3(source, directory):
+    wav_path = decode_wav(source, directory)
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise LyricsUnavailable("Cần FFmpeg trong PATH để nhận diện lời bài hát.")
+    mp3_path = directory / "mono.mp3"
+    try:
+        subprocess.run(
+            [ffmpeg, "-y", "-nostdin", "-v", "error", "-i", str(wav_path),
+             "-vn", "-c:a", "libmp3lame", "-b:a", "64k", "-f", "mp3", str(mp3_path)],
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=90,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        raise ValueError("Không nén được tệp âm thanh sang MP3 để gửi nhận diện.") from error
+    if not mp3_path.is_file() or mp3_path.stat().st_size == 0:
+        raise ValueError("Không tạo được tệp MP3 hợp lệ.")
+    return mp3_path
+
+
+def _validate_https_base_url(base_url: str, env_name: str):
+    parts = urlsplit(base_url)
+    if (parts.scheme != "https" or not parts.hostname or parts.username or parts.password
+            or parts.query or parts.fragment):
+        raise ValueError(f"{env_name} phải là URL HTTPS không chứa thông tin đăng nhập.")
+    return base_url.rstrip("/"), parts.hostname
+
+
+def _dedupe_models(primary: str, fallbacks: tuple[str, ...]) -> tuple[str, ...]:
+    ordered = []
+    for item in (*[p.strip() for p in str(primary or "").split(",")], *fallbacks):
+        if item and item not in ordered:
+            ordered.append(item)
+    return tuple(ordered)
+
+
+def _extract_gemini_text(payload: dict) -> str:
+    candidates = payload.get("candidates")
+    if not isinstance(candidates, list) or not candidates:
+        return ""
+    content = candidates[0].get("content") if isinstance(candidates[0], dict) else None
+    parts = content.get("parts") if isinstance(content, dict) else None
+    if not isinstance(parts, list):
+        return ""
+    return "".join(
+        part.get("text", "") for part in parts
+        if isinstance(part, dict) and isinstance(part.get("text"), str) and not part.get("thought")
+    ).strip()
+
+
+def _strip_code_fences(text: str) -> str:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+    return cleaned.strip()
 
 
 def lyric_result(text, language):
@@ -178,3 +248,154 @@ class LyricsRecognizer:
             )
             lines = [segment.text.strip() for segment in segments if segment.text.strip()]
         return lyric_result("\n".join(lines), info.language)
+
+
+class GeminiLyricsRecognizer:
+    """Transcribe and structure song lyrics directly via Gemini multimodal audio."""
+
+    def __init__(self, api_key, *, model="gemini-3-flash-preview",
+                 base_url=DEFAULT_GEMINI_BASE_URL, work_dir, transport=None):
+        self.base_url, self.host = _validate_https_base_url(base_url, "YUE2_GEMINI_API_BASE_URL")
+        self._api_key = api_key
+        self.models = _dedupe_models(model, GEMINI_FALLBACK_MODELS)
+        self.work_dir = Path(work_dir)
+        self.transport = transport
+
+    def _call_model(self, client, model_name: str, parts: list[dict], *, temperature: float = 0.0):
+        return client.post(
+            f"{self.base_url}/models/{model_name}:generateContent",
+            headers={"x-goog-api-key": self._api_key},
+            json={
+                "contents": [{"role": "user", "parts": parts}],
+                "generationConfig": {"temperature": temperature},
+            },
+        )
+
+    def propose_sections(self, text, model=None):
+        import httpx
+
+        models = _dedupe_models(model or "", self.models)
+        parts = [{"text": f"{SYSTEM_PROMPT}\n\n{text}"}]
+        with httpx.Client(timeout=httpx.Timeout(25, connect=5), follow_redirects=False,
+                          transport=self.transport) as client:
+            for model_name in models:
+                try:
+                    response = self._call_model(client, model_name, parts)
+                    if response.status_code == 200:
+                        extracted = _strip_code_fences(_extract_gemini_text(response.json()))
+                        if extracted:
+                            return extracted
+                except (httpx.HTTPError, ValueError, KeyError, TypeError):
+                    continue
+        return None
+
+    def transcribe(self, source, language):
+        import httpx
+
+        lang_hint = {
+            "vi": "The vocals are in Vietnamese. Preserve accurate Vietnamese spelling and diacritics.",
+            "en": "The vocals are in English. Transcribe accurately in English.",
+        }.get(language, "Keep the exact original language(s) sung (e.g., Vietnamese with accurate diacritics if Vietnamese).")
+        prompt = (
+            "Transcribe ONLY the sung lyrics from this song audio accurately, word for word.\n"
+            f"{lang_hint}\n"
+            "Ignore spoken intro/outro banter, MC talk, applause, crowd noise, and purely instrumental passages.\n"
+            "Format cleanly with numbered section tags such as [Verse 1], [Chorus 1], [Pre-Chorus 1], [Bridge 1], [Outro 1], "
+            "short natural lyric lines, and blank lines between sections.\n"
+            "Return ONLY the formatted lyrics without explanations or markdown code fences.\n"
+            "If the audio has no sung vocals at all, reply with exactly: NO_VOCALS"
+        )
+        self.work_dir.mkdir(parents=True, exist_ok=True)
+        with TemporaryDirectory(prefix="lyrics-gemini-", dir=self.work_dir) as tmp:
+            mp3_path = encode_mp3(source, Path(tmp))
+            audio_b64 = base64.b64encode(mp3_path.read_bytes()).decode("ascii")
+        parts = [
+            {"inline_data": {"mime_type": "audio/mp3", "data": audio_b64}},
+            {"text": prompt},
+        ]
+
+        last_error = None
+        with httpx.Client(timeout=httpx.Timeout(120, connect=10), follow_redirects=False,
+                          transport=self.transport) as client:
+            for model_name in self.models:
+                try:
+                    response = self._call_model(client, model_name, parts)
+                except httpx.TimeoutException:
+                    last_error = "Gemini API quá thời gian chờ."
+                    continue
+                except httpx.HTTPError:
+                    last_error = "Không kết nối được với Gemini API."
+                    continue
+
+                if response.status_code in (401, 403):
+                    raise LyricsUnavailable("Gemini API từ chối khóa hoặc quyền truy cập. Kiểm tra YUE2_GEMINI_API_KEY.")
+                if response.status_code in (404, 429, 500, 502, 503, 504):
+                    last_error = f"Gemini API trả HTTP {response.status_code}."
+                    continue
+                if not response.is_success:
+                    raise LyricsUnavailable(f"Gemini API trả HTTP {response.status_code}.")
+                try:
+                    extracted = _strip_code_fences(_extract_gemini_text(response.json()))
+                except (ValueError, KeyError, TypeError):
+                    last_error = "Gemini API trả kết quả không đúng định dạng."
+                    continue
+                if not extracted:
+                    last_error = "Gemini không trả về lời bài hát."
+                    continue
+                if extracted.upper() == "NO_VOCALS":
+                    raise ValueError("Chưa nhận diện được lời. Bạn có thể tự dán lời bài hát.")
+                return lyric_result(extracted, language or "auto")
+
+        raise LyricsUnavailable(last_error or "Gemini API tạm thời không khả dụng.")
+
+
+def optimize_style_with_gemini(
+        style: str,
+        lyrics: str,
+        api_key: str,
+        *,
+        model: str = "gemini-flash-lite-latest",
+        base_url: str = DEFAULT_GEMINI_BASE_URL,
+        transport=None) -> str | None:
+    """Translate/polish a user style prompt into concise English YuE2 musical tags (fail-open)."""
+    import httpx
+
+    cleaned = style.strip()
+    if not cleaned or not api_key:
+        return None
+    try:
+        resolved_base, _ = _validate_https_base_url(base_url, "YUE2_GEMINI_API_BASE_URL")
+    except ValueError:
+        return None
+    models = _dedupe_models(model, GEMINI_STYLE_FALLBACK_MODELS)
+    prompt = (
+        "Convert the following song arrangement/style request into a single concise comma-separated line of "
+        "English musical style tags optimized for the YuE2 music generation model (genre, mood, instruments, "
+        "vocal timbre/gender, tempo/groove).\n"
+        "Preserve the user's exact musical intent and instruments (for example, if they ask for 'only piano', "
+        "keep solo piano and do not add drums). If the lyrics or style are Vietnamese, include 'Vietnamese' as the first tag.\n"
+        "Output ONLY the comma-separated tag line (max 280 characters), no quotes, no bullet points, no commentary.\n"
+        f"Style input: {cleaned[:600]}\n"
+        f"Lyrics snippet: {lyrics[:240]}"
+    )
+    with httpx.Client(timeout=httpx.Timeout(10, connect=4), follow_redirects=False,
+                      transport=transport) as client:
+        for model_name in models:
+            try:
+                response = client.post(
+                    f"{resolved_base}/models/{model_name}:generateContent",
+                    headers={"x-goog-api-key": api_key},
+                    json={
+                        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                        "generationConfig": {"temperature": 0.1},
+                    },
+                )
+                if response.status_code != 200:
+                    continue
+                text = _strip_code_fences(_extract_gemini_text(response.json()))
+                line = " ".join(part.strip() for part in text.splitlines() if part.strip()).strip('"\' ')
+                if line and len(line) <= 600:
+                    return line
+            except (httpx.HTTPError, ValueError, KeyError, TypeError):
+                continue
+    return None

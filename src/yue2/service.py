@@ -55,7 +55,10 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator, model_validator
 
 from .cover import COVER_AUDIO_KEY, COVER_DISABLED, COVER_SHA_KEY, generation_fields
-from .lyrics import ApiLyricsRecognizer, LyricsRecognizer, LyricsUnavailable
+from .lyrics import (
+    ApiLyricsRecognizer, DEFAULT_GEMINI_BASE_URL, GeminiLyricsRecognizer,
+    LyricsRecognizer, LyricsUnavailable,
+)
 from .lyric_sections import add_lyric_sections
 from .service_store import IdempotencyConflict, JobStore, QueueFull, TERMINAL
 
@@ -100,6 +103,9 @@ class Settings(BaseModel):
     lyrics_api_model: str = "gpt-4o-transcribe"
     lyrics_structure_model: str = "gpt-6-luna"
     lyrics_api_key: SecretStr | None = Field(default=None, repr=False)
+    gemini_api_base_url: str = DEFAULT_GEMINI_BASE_URL
+    gemini_api_model: str = "gemini-3-flash-preview"
+    gemini_api_key: SecretStr | None = Field(default=None, repr=False)
     sheetsage: str = "m-a-p/SheetSage2"
     sheetsage_revision: str | None = None
     sheetsage_device: Literal["off", "cpu", "cuda", "auto"] = "auto"
@@ -884,11 +890,22 @@ def create_app(settings=None, pipeline_factory=None, transcriber=None, lyrics_re
         settings.lyrics_model, local_files_only=lyrics_offline,
         work_dir=worker.root / "lyrics-tmp",
     )
+    gemini_key = settings.gemini_api_key.get_secret_value().strip() if settings.gemini_api_key else ""
     api_key = settings.lyrics_api_key.get_secret_value().strip() if settings.lyrics_api_key else ""
-    api_recognizer = ApiLyricsRecognizer(
-        settings.lyrics_api_base_url, settings.lyrics_api_model, api_key,
-        work_dir=worker.root / "lyrics-tmp",
-    ) if api_key else None
+    if gemini_key:
+        api_recognizer = GeminiLyricsRecognizer(
+            gemini_key,
+            model=settings.gemini_api_model,
+            base_url=settings.gemini_api_base_url,
+            work_dir=worker.root / "lyrics-tmp",
+        )
+    elif api_key:
+        api_recognizer = ApiLyricsRecognizer(
+            settings.lyrics_api_base_url, settings.lyrics_api_model, api_key,
+            work_dir=worker.root / "lyrics-tmp",
+        )
+    else:
+        api_recognizer = None
     lyrics_lock = threading.Lock()
 
     @asynccontextmanager

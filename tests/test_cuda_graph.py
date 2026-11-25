@@ -120,6 +120,8 @@ def test_quantized_model_requires_explicit_eager_path(model):
 @pytest.mark.parametrize("backend", ["auto", "cudnn"])
 @pytest.mark.parametrize("fused", [False, True])
 def test_real_cuda_graph_bfloat16_parity(model, prefixes, backend, fused):
+    if backend == "cudnn" and torch.cuda.get_device_capability(0) < (8, 0):
+        pytest.skip("cuDNN BF16 SDPA requires sm_80+")
     # Head size 8 exercises fused CUDA paths, as does the real head size 128.
     with torch.random.fork_rng(devices=[]):
         torch.manual_seed(146)

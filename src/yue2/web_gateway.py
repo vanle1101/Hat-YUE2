@@ -17,6 +17,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from starlette.background import BackgroundTask
 
+from .lyrics import DEFAULT_GEMINI_BASE_URL, optimize_style_with_gemini
+
 
 FORWARDED_REQUEST_HEADERS = (
     "content-type", "idempotency-key", "range",
@@ -141,6 +143,27 @@ def _prepare_style(style: str, lyrics: str, *, default: str = "") -> str:
         trimmed = cleaned[:STYLE_MAX_LENGTH].rsplit(",", 1)[0].strip()
         cleaned = trimmed or cleaned[:STYLE_MAX_LENGTH].strip()
     return cleaned
+
+
+async def _resolve_style(style: str, lyrics: str, *, default: str = "", instrumental: bool = False) -> str:
+    lyric_context = "" if instrumental else lyrics
+    base = _prepare_style(style, lyric_context, default=default)
+    gemini_key = os.environ.get("YUE2_GEMINI_API_KEY", "").strip()
+    optimize_flag = os.environ.get("YUE2_STYLE_OPTIMIZE", "true").strip().lower()
+    if gemini_key and optimize_flag not in {"0", "false", "no", "off"} and base:
+        base_url = os.environ.get("YUE2_GEMINI_API_BASE_URL", DEFAULT_GEMINI_BASE_URL).strip() or DEFAULT_GEMINI_BASE_URL
+        model = os.environ.get("YUE2_GEMINI_STYLE_MODEL", "gemini-flash-lite-latest").strip() or "gemini-flash-lite-latest"
+        polished = await asyncio.to_thread(
+            optimize_style_with_gemini,
+            base,
+            lyric_context,
+            gemini_key,
+            model=model,
+            base_url=base_url,
+        )
+        if polished:
+            return _prepare_style(polished, lyric_context, default=default)
+    return base
 
 
 def _cover_history_path():
@@ -443,7 +466,7 @@ def create_app(upstream=None):
             lyrics = "[Instrumental]\n"
             if "instrumental" not in style.lower():
                 style = f"{style}, instrumental" if style else "instrumental"
-        style = _prepare_style(style, "" if instrumental else lyrics)
+        style = await _resolve_style(style, lyrics, instrumental=instrumental)
         max_variants = 1 if os.environ.get("YUE2_DEFAULT_VARIANTS", "2").strip() == "1" else 2
         n = 1 if (body.get("n") == 1 or max_variants == 1) else 2
         cot = body.get("cot") if body.get("cot") in {"full", "melody", "off"} else "full"
@@ -535,6 +558,13 @@ def create_app(upstream=None):
                 data={"language": language, "provider": provider},
                 timeout=httpx.Timeout(900.0, connect=3.0),
             )
+            if provider == "api" and response.status_code in {429, 500, 502, 503, 504}:
+                response = await app.state.client.post(
+                    upstream + "/v1/lyrics",
+                    files={"audio": (meta["filename"], audio_bytes, meta["mime_type"])},
+                    data={"language": language, "provider": "local"},
+                    timeout=httpx.Timeout(900.0, connect=3.0),
+                )
         except httpx.HTTPError as exc:
             return _upstream_error_response(exc)
 
@@ -562,7 +592,7 @@ def create_app(upstream=None):
         style = str(body.get("style") or "").strip()
         vocal_gender = str(body.get("vocal_gender") or "auto")
         voice_tag = {"female": "female lead vocal", "male": "male lead vocal"}.get(vocal_gender, "")
-        combined_style = _prepare_style(
+        combined_style = await _resolve_style(
             ", ".join(part for part in (description, style, voice_tag) if part),
             lyrics,
             default="pop",
