@@ -154,3 +154,5 @@ Khi chọn **API**, Studio đưa văn bản nhận được tới model `gpt-6-l
 trong bản chép, Studio sẽ gợi ý theo đoạn lặp trên máy. Khi chọn **Trên máy**, cả nhận diện
 và chia đoạn đều chạy cục bộ. Nhãn đoạn là gợi ý và có thể chỉnh trước khi tạo cover.
 Ô **Mô tả bản cover** được dùng làm mô tả phối khí và giọng hát cho bước tạo nhạc bằng YuE2.
+
+Nếu nhạc nền làm nhận sai lời, trong tab **Cover** hãy chọn bản gốc, rồi mở **Dùng vocal đã tách** và chọn stem vocal từ AI Cover hoặc công cụ tách nhạc bạn đang dùng. Studio dùng stem cho nút **Nhận diện lời** và giữ bản gốc cho nút **Tạo bản cover**. Bạn có thể bỏ stem để nhận diện lại trực tiếp từ bản gốc.

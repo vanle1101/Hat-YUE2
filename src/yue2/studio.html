@@ -92,6 +92,10 @@ audio { width: 100%; height: 36px; margin-top: 10px; }
 .lyric-tools select { width: auto; font-size: 12px; }
 #recognize { color: var(--accent); border-color: #586c51; }
 #providerHint { margin: 6px 0 0; }
+.vocal-tools { flex-basis: 100%; margin-top: 2px; }
+.vocal-tools summary { color: var(--muted); font-size: 12px; }
+.vocal-tools .actions { align-items: center; margin-top: 7px; }
+#vocalName { overflow-wrap: anywhere; }
 #recognitionStatus:empty, .message:empty { display: none; }
 #recognitionStatus { margin-top: 7px; }
 #lyricSuggestion { margin-block: 8px; padding: 8px; background: var(--raised); border-radius: 7px; }
@@ -197,6 +201,16 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflo
                   <option value="local">Trên máy</option><option value="api">API</option>
                 </select>
                 <button id="recognize">Nhận diện lời</button>
+                <details id="vocalTools" class="vocal-tools">
+                  <summary>Dùng vocal đã tách</summary>
+                  <p class="hint">File này chỉ dùng để nhận diện lời. Giai điệu vẫn lấy từ bản gốc.</p>
+                  <input id="vocalAudio" type="file" accept="audio/*,.mp3,.wav,.flac,.m4a,.ogg,.aac,.webm" hidden>
+                  <div class="actions">
+                    <button type="button" id="chooseVocal">Chọn file vocal</button>
+                    <button type="button" id="removeVocal" hidden>Bỏ vocal</button>
+                    <span id="vocalName" class="hint" role="status"></span>
+                  </div>
+                </details>
               </div>
               <p id="providerHint" class="hint" hidden></p>
               <p id="recognitionStatus" class="status" role="status"></p>
@@ -318,6 +332,7 @@ const terminalStates = ['succeeded', 'truncated', 'failed', 'cancelled'];
 let mode = 'song';
 let sourceFile = null;
 let sourceURL = null;
+let vocalFile = null;
 let recognition = null;
 let lyricsApiHost = '';
 let submitting = false;
@@ -647,8 +662,8 @@ function setSource(file) {
     message('Hãy chọn một tệp âm thanh có dữ liệu và dưới 40 MiB.', true);
     return;
   }
-  if (recognition) recognition.abort();
-  recognition = null;
+  setVocal(null);
+  $('vocalTools').open = false;
   const player = $('sourcePlayer');
   player.pause();
   player.removeAttribute('src');
@@ -663,11 +678,33 @@ function setSource(file) {
   $('sourceSummary').hidden = !file;
   $('chooseAudio').hidden = Boolean(file);
   $('audioPanel').classList.toggle('is-empty', !file);
+  setMode(mode);
+  if (file && $('lyrics').value.trim()) {
+    lyricStatus('Lời đang có được giữ lại. Hãy kiểm tra lời có khớp bản thu mới.');
+  }
+}
+
+function clearRecognition() {
+  if (recognition) recognition.abort();
+  recognition = null;
   $('recognize').disabled = false;
   $('recognize').textContent = 'Nhận diện lời';
   $('recognizedText').value = '';
+  $('lyricSuggestion').hidden = true;
   lyricStatus('');
-  setMode(mode);
+}
+
+function setVocal(file) {
+  if (file && (!file.size || file.size >= 40 * 1024 * 1024)) {
+    lyricStatus('File vocal phải có dữ liệu và dưới 40 MiB.', true);
+    return;
+  }
+  clearRecognition();
+  vocalFile = file;
+  $('vocalName').textContent = file?.name || '';
+  $('chooseVocal').textContent = file ? 'Đổi file vocal' : 'Chọn file vocal';
+  $('removeVocal').hidden = !file;
+  updateProviderHint();
 }
 
 function updateProviderHint() {
@@ -676,9 +713,11 @@ function updateProviderHint() {
   provider.hidden = !displayed;
   const hint = $('providerHint');
   hint.hidden = !displayed;
-  hint.textContent = provider.value === 'api'
-    ? 'Âm thanh và lời nhận diện được xử lý qua ' + lyricsApiHost + '.'
-    : 'Whisper nhận diện và chia đoạn lời trên máy này.';
+  if (provider.value === 'api') {
+    hint.textContent = (vocalFile ? 'File vocal' : 'Bản thu gốc') + ' và lời nhận diện được xử lý qua ' + lyricsApiHost + '.';
+  } else {
+    hint.textContent = 'Whisper nhận diện và chia đoạn lời trên máy này.';
+  }
 }
 
 async function loadLyricsProviders() {
@@ -695,11 +734,12 @@ async function loadLyricsProviders() {
 $('lyricProvider').onchange = updateProviderHint;
 
 async function recognizeLyrics() {
-  if (!sourceFile || recognition) return;
+  if (mode !== 'cover' || !sourceFile || recognition) return;
+  clearRecognition();
   const current = new AbortController();
   recognition = current;
   const form = new FormData();
-  form.append('audio', sourceFile);
+  form.append('audio', vocalFile || sourceFile);
   form.append('language', $('lyricLanguage').value);
   const provider = lyricsApiHost ? $('lyricProvider').value : 'local';
   form.append('provider', provider);
@@ -743,6 +783,13 @@ $('coverAudio').onchange = () => {
   if (file) setSource(file);
 };
 $('removeAudio').onclick = () => { setSource(null); $('chooseAudio').focus(); };
+$('chooseVocal').onclick = () => $('vocalAudio').click();
+$('vocalAudio').onchange = () => {
+  const file = $('vocalAudio').files[0];
+  $('vocalAudio').value = '';
+  if (file && sourceFile) setVocal(file);
+};
+$('removeVocal').onclick = () => { setVocal(null); $('chooseVocal').focus(); };
 $('playSource').onclick = action(async () => {
   const player = $('sourcePlayer');
   player.hidden = !player.hidden;
